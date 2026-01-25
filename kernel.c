@@ -12,6 +12,73 @@
     #error "Code must be compiled with x86-elf compiler"
 #endif
 
+
+// -------------------------- Port I/O Functions -------------------------- //
+
+static inline void outb(uint16_t port, uint8_t val) {
+    asm volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline uint8_t inb(uint16_t port) {
+    uint8_t ret;
+    asm volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+
+
+// -------------------------- Serial Debugging -------------------------- //
+
+#define COM1_PORT 0x3F8               //COM1 port address
+
+void serial_init() {                 //Function to initialize serial port for debugging
+
+	outb(COM1_PORT + 1, 0x00);    // Disable all interrupts
+	outb(COM1_PORT + 3, 0x80);    // Enable DLAB (set baud rate divisor)
+	outb(COM1_PORT + 0, 0x01);    // Set divisor to 3 (low byte) 115200 baud
+	outb(COM1_PORT + 1, 0x00);    //                  (high byte)
+	outb(COM1_PORT + 3, 0x03);    // 8 bits, no parity, one stop bit
+	outb(COM1_PORT + 2, 0xC7);    // Enable FIFO, clear them, with 14-byte threshold
+	outb(COM1_PORT + 4, 0x0B);    // IRQs enabled, RTS/DSR set
+}
+
+//-------------------------- Serial Output -------------------------- //
+
+static int serial_is_transmit_empty(void) {		 //Function to check if serial port is ready to transmit
+    return inb(COM1_PORT + 5) & 0x20;
+}
+
+void serial_putchar(char c) {				 //Function to write character to serial port
+    while (!serial_is_transmit_empty());
+    outb(COM1_PORT, c);
+}
+
+void serial_write(const char *s) {						 //Function to write string to serial port
+    while (*s) {
+        if (*s == '\n')
+            serial_putchar('\r');
+        serial_putchar(*s++);
+    }
+}
+
+void printk(const char *s) {						 //Kernel print function for debugging via serial port
+    serial_write(s);
+}
+
+__attribute__((noreturn))          								//Function to handle kernel panic situations
+void panic(const char *msg) {
+    serial_write("KERNEL PANIC: ");
+    serial_write(msg);
+    serial_write("\n");
+    asm volatile ("cli; hlt");
+    for (;;);
+}
+
+
+
+
+// -------------------------- VGA Text Mode Output -------------------------- //
+
 enum vga_color {                        //Define VGA text mode colors
 	VGA_COLOR_BLACK = 0,
 	VGA_COLOR_BLUE = 1,
@@ -107,6 +174,8 @@ void terminal_writestring(const char* data)                     //Function to wr
 void kernel_main(void)                                          //Kernel main function
 {
 	terminal_initialize();
+	serial_init();
 
-	terminal_writestring("kernel: hello world");
+	terminal_writestring("Kernel: Online");
+	serial_write("Serial I/O: Online\n");
 }
