@@ -65,16 +65,27 @@ void printk(const char *s) {						 //Kernel print function for debugging via ser
     serial_write(s);
 }
 
-__attribute__((noreturn))          								//Function to handle kernel panic situations
+// -------------------------- Panic & Assertions -------------------------- //
+
+__attribute__((noreturn))										//Function to handle kernel panic situations
 void panic(const char *msg) {
-    serial_write("KERNEL PANIC: ");
+    serial_write("\n====================\n");
+    serial_write("KERNEL PANIC\n");
     serial_write(msg);
-    serial_write("\n");
-    asm volatile ("cli; hlt");
-    for (;;);
+    serial_write("\nSystem halted.\n");
+    serial_write("====================\n");
+
+    asm volatile ("cli");   
+    asm volatile ("hlt");   
+    for (;;);               // Safety: never return
 }
 
-
+#define kassert(condition)                                  \
+    do {                                                     \
+        if (!(condition)) {                                 \
+            panic("Assertion failed: " #condition);         \
+        }                                                    \
+    } while (0)
 
 
 // -------------------------- VGA Text Mode Output -------------------------- //
@@ -178,4 +189,6 @@ void kernel_main(void)                                          //Kernel main fu
 
 	terminal_writestring("Kernel: Online");
 	serial_write("Serial I/O: Online\n");
+
+	//kassert(1 == 0);  //Example assertion that fails
 }
