@@ -1,6 +1,8 @@
 # Orion
 A minimal distributed OS based on Plan-9 philosophies
 
+## Dev Commands
+
 ### assemble boot.s =
 i686-elf-as boot.s -o boot.o
 
