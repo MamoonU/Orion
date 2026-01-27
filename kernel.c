@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "idt.h"
+
 //Basic checks to see if x86-elf cross compiler is in use correctly
 
 #if defined (__linux__)                                                         //Y/N Linux?
@@ -90,33 +92,33 @@ void panic(const char *msg) {
 
 // -------------------------- VGA Text Mode Output -------------------------- //
 
-enum vga_color {                        //Define VGA text mode colors
-	VGA_COLOR_BLACK = 0,
-	VGA_COLOR_BLUE = 1,
-	VGA_COLOR_GREEN = 2,
-	VGA_COLOR_CYAN = 3,
-	VGA_COLOR_RED = 4,
-	VGA_COLOR_MAGENTA = 5,
-	VGA_COLOR_BROWN = 6,
-	VGA_COLOR_LIGHT_GREY = 7,
-	VGA_COLOR_DARK_GREY = 8,
-	VGA_COLOR_LIGHT_BLUE = 9,
-	VGA_COLOR_LIGHT_GREEN = 10,
-	VGA_COLOR_LIGHT_CYAN = 11,
-	VGA_COLOR_LIGHT_RED = 12,
-	VGA_COLOR_LIGHT_MAGENTA = 13,
-	VGA_COLOR_LIGHT_BROWN = 14,
-	VGA_COLOR_WHITE = 15,
+enum vga_colour {                        //Define VGA text mode colours
+	VGA_COLOUR_BLACK = 0,
+	VGA_COLOUR_BLUE = 1,
+	VGA_COLOUR_GREEN = 2,
+	VGA_COLOUR_CYAN = 3,
+	VGA_COLOUR_RED = 4,
+	VGA_COLOUR_MAGENTA = 5,
+	VGA_COLOUR_BROWN = 6,
+	VGA_COLOUR_LIGHT_GREY = 7,
+	VGA_COLOUR_DARK_GREY = 8,
+	VGA_COLOUR_LIGHT_BLUE = 9,
+	VGA_COLOUR_LIGHT_GREEN = 10,
+	VGA_COLOUR_LIGHT_CYAN = 11,
+	VGA_COLOUR_LIGHT_RED = 12,
+	VGA_COLOUR_LIGHT_MAGENTA = 13,
+	VGA_COLOUR_LIGHT_BROWN = 14,
+	VGA_COLOUR_WHITE = 15,
 };
 
-static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg)         //Function to create color byte by combining foreground and background colors
+static inline uint8_t vga_entry_colour(enum vga_colour fg, enum vga_colour bg)         //Function to create colour byte by combining foreground and background colours
 {
 	return fg | bg << 4;
 }
 
-static inline uint16_t vga_entry(unsigned char uc, uint8_t color)                    //Function to create VGA entry by combining character and color byte   
+static inline uint16_t vga_entry(unsigned char uc, uint8_t colour)                    //Function to create VGA entry by combining character and colour byte   
 {
-	return (uint16_t) uc | (uint16_t) color << 8;
+	return (uint16_t) uc | (uint16_t) colour << 8;
 }
 
 size_t strlen(const char* str)      //Basic string length function because standard library is not available
@@ -133,37 +135,37 @@ size_t strlen(const char* str)      //Basic string length function because stand
 
 size_t terminal_row;                                    //Current terminal row
 size_t terminal_column;                                 //Current terminal column
-uint8_t terminal_color;                                 //Current terminal color
+uint8_t terminal_colour;                                 //Current terminal colour
 uint16_t* terminal_buffer = (uint16_t*)VGA_MEMORY;      //Pointer to VGA text mode buffer
 
 void terminal_initialize(void)                          //Function to initialize terminal
 {
 	terminal_row = 0;
 	terminal_column = 0;
-	terminal_color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+	terminal_colour = vga_entry_colour(VGA_COLOUR_LIGHT_GREY, VGA_COLOUR_BLACK);
 	
 	for (size_t y = 0; y < VGA_HEIGHT; y++) {
 		for (size_t x = 0; x < VGA_WIDTH; x++) {
 			const size_t index = y * VGA_WIDTH + x;
-			terminal_buffer[index] = vga_entry(' ', terminal_color);
+			terminal_buffer[index] = vga_entry(' ', terminal_colour);
 		}
 	}
 }
 
-void terminal_setcolor(uint8_t color)                   //Function to set terminal color    
+void terminal_setcolour(uint8_t colour)                   //Function to set terminal colour    
 {
-	terminal_color = color;
+	terminal_colour = colour;
 }
 
-void terminal_putentryat(char c, uint8_t color, size_t x, size_t y)     //Function to put character at specific position with specific color
+void terminal_putentryat(char c, uint8_t colour, size_t x, size_t y)     //Function to put character at specific position with specific colour
 {
 	const size_t index = y * VGA_WIDTH + x;
-	terminal_buffer[index] = vga_entry(c, color);
+	terminal_buffer[index] = vga_entry(c, colour);
 }
 
 void terminal_putchar(char c)                                           //Function to put character at current position and advance cursor
 {
-	terminal_putentryat(c, terminal_color, terminal_column, terminal_row);
+	terminal_putentryat(c, terminal_colour, terminal_column, terminal_row);
 	if (++terminal_column == VGA_WIDTH) {
 		terminal_column = 0;
 		if (++terminal_row == VGA_HEIGHT)
