@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.2.4)  6 FEB 2026 13:11
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.2.4)  6 FEB 2026 13:20
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -493,24 +493,24 @@ Package hyperref Info: Option `colorlinks' set `true' on input line 23.
  (./Orion.aux)
 \openout1 = `Orion.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 83.
-LaTeX Font Info:    ... okay on input line 83.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 83.
-LaTeX Font Info:    ... okay on input line 83.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 83.
-LaTeX Font Info:    ... okay on input line 83.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 83.
-LaTeX Font Info:    ... okay on input line 83.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 83.
-LaTeX Font Info:    ... okay on input line 83.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 83.
-LaTeX Font Info:    ... okay on input line 83.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 83.
-LaTeX Font Info:    ... okay on input line 83.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 83.
-LaTeX Font Info:    ... okay on input line 83.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 83.
-LaTeX Font Info:    ... okay on input line 83.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 84.
+LaTeX Font Info:    ... okay on input line 84.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 84.
+LaTeX Font Info:    ... okay on input line 84.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 84.
+LaTeX Font Info:    ... okay on input line 84.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 84.
+LaTeX Font Info:    ... okay on input line 84.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 84.
+LaTeX Font Info:    ... okay on input line 84.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 84.
+LaTeX Font Info:    ... okay on input line 84.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 84.
+LaTeX Font Info:    ... okay on input line 84.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 84.
+LaTeX Font Info:    ... okay on input line 84.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 84.
+LaTeX Font Info:    ... okay on input line 84.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: pdftex
@@ -577,7 +577,7 @@ File: color.cfg 2016/01/02 v1.6 sample color configuration
 )
 Package color Info: Driver file: pdftex.def on input line 149.
  (/usr/share/texlive/texmf-dist/tex/latex/graphics/mathcolor.ltx))
-Package hyperref Info: Link coloring ON on input line 83.
+Package hyperref Info: Link coloring ON on input line 84.
  (./Orion.out) (./Orion.out)
 \@outlinefile=\write4
 \openout4 = `Orion.out'.
@@ -595,17 +595,17 @@ Package biblatex Info: Automatic encoding selection.
 Package biblatex Info: Trying to load bibliographic data...
 Package biblatex Info: ... file 'Orion.bbl' found.
  (./Orion.bbl)
-Package biblatex Info: Reference section=0 on input line 83.
-Package biblatex Info: Reference segment=0 on input line 83.
+Package biblatex Info: Reference section=0 on input line 84.
+Package biblatex Info: Reference segment=0 on input line 84.
 <OrionInverted.png, id=36, 240.9pt x 240.9pt>
 File: OrionInverted.png Graphic file (type png)
 <use OrionInverted.png>
-Package pdftex.def Info: OrionInverted.png  used on input line 114.
+Package pdftex.def Info: OrionInverted.png  used on input line 115.
 (pdftex.def)             Requested size: 184.65276pt x 184.65915pt.
  [1
 
 {/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map} <./OrionInverted.png>]
-Overfull \hbox (3.95676pt too wide) in paragraph at lines 141--142
+Overfull \hbox (3.95676pt too wide) in paragraph at lines 142--143
 [] []\OT1/cmr/bx/n/12 Test-ing.[] \OT1/cmr/m/n/12 Con-duct a set of tasks which ex-er-cise core Plan 9 mech-a-nisms such as names-pace man-age-ment,
  []
 
@@ -613,9 +613,9 @@ Overfull \hbox (3.95676pt too wide) in paragraph at lines 141--142
 pdfTeX warning (ext4): destination with the same identifier (name{page.1}) has been already used, duplicate ignored
 <to be read again> 
                    \relax 
-l.149 \newpage
+l.150 \newpage
                [1]
-Overfull \hbox (9.83446pt too wide) in paragraph at lines 162--163
+Overfull \hbox (9.83446pt too wide) in paragraph at lines 163--164
 []\OT1/cmr/m/n/12 ``Timesharing cen-tral-ized the man-age-ment and amor-ti-za-tion of costs and re-sources; per-sonal com-put-ing
  []
 

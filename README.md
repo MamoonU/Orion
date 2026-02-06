@@ -2,7 +2,7 @@
 A minimal distributed OS based on Plan-9 philosophies
 
 Inline-style: 
-![alt text](https://github.com/MamoonU/Orion/tree/main/Report/OrionInverted.png "Logo")
+![alt text](https://github.com/MamoonU/Orion/OrionInverted.png "Logo")
 
 
 ## Dev Commands
