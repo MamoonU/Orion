@@ -7,7 +7,7 @@ extern void isr8();                     // Double fault
 extern void isr13();                    // General protection fault
 extern void isr14();                    // Page fault
 
-static struct idt_entry idt[256];
+static struct idt_entry idt[256];           // from idt.h
 static struct idt_ptr idtp;
 
 // Provided by kernel.c
@@ -36,7 +36,7 @@ void idt_init(void) {                       //initialize idt
         idt_set_gate(i, 0);
     }
 
-    // CPU exceptions we care about
+    // CPU exceptions needed
     idt_set_gate(0,  (uint32_t)isr0);               // Divide by zero
     idt_set_gate(6,  (uint32_t)isr6);        // Invalid opcode
     idt_set_gate(8,  (uint32_t)isr8);    // Double fault
@@ -47,7 +47,7 @@ void idt_init(void) {                       //initialize idt
     serial_write("IDT: Loaded\n");
 }
 
-// C-level exception handler
+// C exception handler
 void isr_handler(uint32_t int_no, uint32_t err_code) {
     serial_write("\n=== CPU EXCEPTION ===\n");
 
@@ -59,11 +59,11 @@ void isr_handler(uint32_t int_no, uint32_t err_code) {
         case 14:
             serial_write("Page Fault\n");
             uint32_t fault_addr;
-            asm volatile ("mov %%cr2, %0" : "=r"(fault_addr));
+            asm volatile ("mov %%cr2, %0" : "=r"(fault_addr));      //cr2 = page fault address
             serial_write("Fault address captured\n");
             break;
         default:
-            serial_write("Unknown Exception\n");
+            serial_write("Unknown CPU Exception\n");
             break;
     }
 

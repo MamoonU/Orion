@@ -13,7 +13,7 @@ struct idt_entry {
 } __attribute__((packed));
 
 struct idt_ptr {                //idt pointer structure
-    uint16_t limit;
+    uint16_t limit;             //idt - 1
     uint32_t base;              //base address in the idt array
 } __attribute__((packed));
 

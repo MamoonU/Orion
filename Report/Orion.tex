@@ -1,0 +1,122 @@
+\documentclass[12pt]{report}
+
+% ---------- Packages ----------
+\usepackage[margin=0.75in]{geometry}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{biblatex}
+\usepackage{titlesec}
+
+\addbibresource{sources.bib}
+
+% ---------- Formatting ----------
+\onehalfspacing
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue,
+    citecolor=black
+}
+
+% Paragraph formatting
+%\setlength{\parskip}{\baselineskip}
+%\setlength{\parindent}{0pt}
+
+% Heading spacing
+\titlespacing*{\chapter}{0pt}{-20pt}{12pt}
+\titlespacing*{\section}{0pt}{12pt}{6pt}
+\titlespacing*{\subsection}{0pt}{10pt}{4pt}
+\titlespacing*{\subsubsection}{0pt}{8pt}{2pt}
+
+% Optional: Chapter title format (Chapter 2 – Plan 9)
+\titleformat{\chapter}
+  {\normalfont\huge\bfseries}
+  {Chapter \thechapter\ --}
+  {0.5em}
+  {}
+
+% ---------- Title info ----------
+\title{Orion}
+\author{Mamoon Umar}
+\date{
+    BSc Software Engineering\\[2ex]
+    University of Brighton\\[2ex]
+    Saeed Malekeshahi Gheytassi (Supervisor)\\[2ex]
+    A minimal distributed operating system based on Plan 9 philosophies\\[2ex]
+    2025 -- 2026
+}
+
+\begin{document}
+
+% ---------- Title page ----------
+\maketitle
+
+\begin{abstract}
+This report focuses on the design and implementation of a time-shared, distributed operating system. The system is built on the principles of Plan 9 by Bell Labs, emphasizing simplicity, modularity, and network transparency. Previous work in distributed systems have been researched and discussed. Orion implements these philosophies to create a lightweight system which allows users to seamlessly access resources across a network.
+\end{abstract}
+
+\thispagestyle{empty}
+\clearpage
+
+% ---------- Table of contents ----------
+\tableofcontents
+\clearpage
+
+% ---------- Chapters ----------
+\chapter{Introduction}
+This is the introduction.
+
+\chapter{Plan 9}
+
+\section{Computing System History}
+
+\subsubsection{The fall of Multics}
+Slow and inevitable, it was described by Dennis Ritchie.
+The cessation of Bell Labs from the Multics project brought K. Thompson, D. Ritchie, M.D. McIlroy and J.F. Ossana to begin work on a new operating system. The group enjoyed the convenience of working with MIT and General Electric, yet placed greater importance on close communication and less complexity. \cite{unix-evolution}
+
+\subsubsection{The rise of UNIX}
+In 1969, the Bell Labs team began researching how to implement a much smaller operating system based on Multics' ideas, but able to run on the much smaller PDP-7 minicomputer. The following decade saw the creation of the C programming language by Ritchie, which then led to the birth of UNIX. It was adopted early by universities, research labs, and eventually industry. \cite{50-years-unix}
+
+\subsubsection{Sunrise on Plan 9}
+The inventors and now veterans of UNIX and the C language saw the success of their system whilst elsewhere, people slowly grew tired of centralized timesharing machines. The age of personal computers with microprocessors arrived. The team from Bell Labs elaborated:
+
+``Timesharing centralized the management and amortization of costs and resources; personal computing fractured, democratized, and ultimately amplified administrative problems. The choice of an old timesharing operating system to run those personal machines—'' \cite{pike1990plan}
+
+This evaluation of monolithic timeshared systems (UNIX) implemented on personal machines became the foundation of Plan 9.
+
+\section{Plan 9 Technology}
+
+\subsubsection{Design}
+"Build a UNIX out of a lot of little systems, not a system out of a lot of little UNIXes"\\— Bell Labs\cite{pike1990plan}
+
+The first operating systems that ran on these modern computers were UNIX. However, as described by the creators, UNIX has trouble adapting to ideas invented after it. This led to poor implementations of key features such as networking and graphics.
+
+Bell Labs wanted the central administration of timeshared systems whilst also adopting modern personal computers to create a distributed OS for their own designs. \cite{pike1990plan}
+
+Plan 9 has three main philosophies which are strictly adhered to for stable and reliable development:
+
+\begin{enumerate}
+    \item Resources are named and accessed like files in a hierarchical system
+    \item There is a standard protocol for accessing these resources (in Plan 9 it is called 9P)
+    \item The disjoint hierarchies provided by different services are joined in a single private hierarchical file namespace
+\end{enumerate}
+
+\chapter{Distributed Systems}
+Present your results.
+
+\chapter{Orion: An Operating System}
+
+\section{Aims and Objectives}
+
+
+
+\section{Methodology}
+
+\section{Development}
+
+\newpage
+\printbibliography
+
+\end{document}

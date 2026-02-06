@@ -1,7 +1,8 @@
 [bits 32]
 
-extern isr_handler
+extern isr_handler          ; Found in idt.c
 
+; macro defining ISR_NOERR, 1 parameter
 %macro ISR_NOERR 1
 global isr%1
 isr%1:
@@ -11,6 +12,7 @@ isr%1:
     jmp isr_common_stub
 %endmacro
 
+; macro defining ISR_ERR, 1 parameter
 %macro ISR_ERR 1
 global isr%1
 isr%1:
@@ -26,23 +28,23 @@ ISR_ERR   13    ; GP fault
 ISR_ERR   14    ; Page fault
 
 isr_common_stub:
-    pusha
+    pusha           ;save registers, preserve CPU state
     push ds
     push es
     push fs
     push gs
 
-    mov ax, 0x10
+    mov ax, 0x10        ;set kernel segments
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
 
-    push esp
+    push esp                ; pass pointer to stack
     call isr_handler
     add esp, 4
 
-    pop gs
+    pop gs              ; restore CPU state
     pop fs
     pop es
     pop ds
