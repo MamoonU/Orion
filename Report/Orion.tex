@@ -1,14 +1,16 @@
 \documentclass[12pt]{report}
 
 % ---------- Packages ----------
-\usepackage[margin=0.75in]{geometry}
+\usepackage[margin=0.60in]{geometry}
 \usepackage{setspace}
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{biblatex}
-\usepackage{titlesec}
-
 \addbibresource{sources.bib}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage[none]{hyphenat} % prevent word splitting
 
 % ---------- Formatting ----------
 \onehalfspacing
@@ -16,13 +18,41 @@
 \hypersetup{
     colorlinks=true,
     linkcolor=black,
-    urlcolor=blue,
+    urlcolor=black,
     citecolor=black
 }
+
+% ---------- Section numbering (detach from chapters) ----------
+\setcounter{secnumdepth}{3}
+\renewcommand{\thesection}{\arabic{section}}
+\renewcommand{\thesubsection}{\thesection.\arabic{subsection}}
+\renewcommand{\thesubsubsection}{\thesubsection.\arabic{subsubsection}}
+
 
 % Paragraph formatting
 %\setlength{\parskip}{\baselineskip}
 %\setlength{\parindent}{0pt}
+
+
+
+% ---------- Heading sizes ----------
+\titleformat{\section}
+  {\normalfont\large\bfseries}
+  {\thesection}
+  {1em}
+  {}
+
+\titleformat{\subsection}
+  {\normalfont\normalsize\bfseries}
+  {\thesubsection}
+  {1em}
+  {}
+
+\titleformat{\subsubsection}
+  {\normalfont\normalsize\itshape}
+  {\thesubsubsection}
+  {1em}
+  {}
 
 % Heading spacing
 \titlespacing*{\chapter}{0pt}{-20pt}{12pt}
@@ -30,12 +60,14 @@
 \titlespacing*{\subsection}{0pt}{10pt}{4pt}
 \titlespacing*{\subsubsection}{0pt}{8pt}{2pt}
 
-% Optional: Chapter title format (Chapter 2 – Plan 9)
-\titleformat{\chapter}
-  {\normalfont\huge\bfseries}
-  {Chapter \thechapter\ --}
-  {0.5em}
-  {}
+% Hypotheses list
+\newlist{henumerate}{enumerate}{1}
+\setlist[henumerate]{
+    label=\(\scalebox{1.2}{$\mathcal{H}_{\mathbf{\arabic*}}$}\),
+    ref=\(\scalebox{1.2}{$\mathcal{H}_{\mathbf{\arabic*}}$}\),
+    leftmargin=*,
+    itemsep=0.5\baselineskip
+}
 
 % ---------- Title info ----------
 \title{Orion}
@@ -50,50 +82,93 @@
 
 \begin{document}
 
-% ---------- Title page ----------
-\maketitle
+% ---------- Custom title page ----------
+\begin{titlepage}
+\begin{center}
 
-\begin{abstract}
-This report focuses on the design and implementation of a time-shared, distributed operating system. The system is built on the principles of Plan 9 by Bell Labs, emphasizing simplicity, modularity, and network transparency. Previous work in distributed systems have been researched and discussed. Orion implements these philosophies to create a lightweight system which allows users to seamlessly access resources across a network.
-\end{abstract}
+\vspace*{4em}
 
-\thispagestyle{empty}
-\clearpage
+{\LARGE \textbf{Orion}}\\[0.5em]
 
-% ---------- Table of contents ----------
-\tableofcontents
-\clearpage
+{\large Mamoon Umar (22819222)}\\[1em]
 
-% ---------- Chapters ----------
-\chapter{Introduction}
-This is the introduction.
+BSc Software Engineering\\
+University of Brighton\\[1em]
 
-\chapter{Plan 9}
+Saeed Malekeshahi Gheytassi (Supervisor)\\[1em]
 
-\section{Computing System History}
+2025 -- 2026
 
-\subsubsection{The fall of Multics}
-Slow and inevitable, it was described by Dennis Ritchie.
+\vspace{3em}
+
+{\large \textbf{Abstract}}\\[1em]
+
+\begin{minipage}{0.85\textwidth}
+\onehalfspacing
+\centering
+This report focuses on the design and implementation of a time-shared, distributed operating system. The system is built on the principles of Plan 9 by Bell Labs, emphasizing simplicity, modularity, and network transparency. Previous work in distributed systems has been researched and discussed. Orion implements these philosophies to create a lightweight system which allows users to seamlessly access resources across a network.
+\end{minipage}
+
+\vspace{5em}
+
+\includegraphics[width=0.35\textwidth]{OrionInverted.png}
+
+\end{center}
+\end{titlepage}
+
+
+% ---------- Sections ----------
+\newpage
+\section{Project Definition}
+
+\subsection{Scope}
+This project focuses on the design and implementation of Orion, a minimal distributed operating system developed to evaluate the applicability of Plan 9 principles in a modern context. The scope is limited to core operating system concerns such as namespace management, inter-process communication, resource management and distributed interaction between host and terminals; this prioritizes architectural and abstraction clarity over performance and stability. Large scale deployment, hardware support, and benchmarking are explicitly out of scope and will not be explored in this research paper. Qualitative comparisons against modern systems ensure a focus on structural complexity and abstraction models rather than empirical metrics. As a result, Orion should be treated as a research artifact and evaluative instrument to distill the research conducted on Plan 9 and distributed systems.
+
+\subsection{Objectives \& Hypotheses}
+
+Building on the defined scope, the objectives of this project originated from the hypotheses. I anticipate practical outcomes from applying Plan 9 principles to modern distributed systems. By explicitly testing these hypotheses, Orion will serve as a platform for analysing design trade-offs between Plan 9 mechanisms and modern alternatives.
+
+\begin{henumerate}
+    \item\label{hyp:viability} Plan 9 design principles can be successfully applied to construct a functional, minimal distributed system in a modern context.
+    \item\label{hyp:complexity} Plan 9 abstractions reduce conceptual and implementation complexity compared to typical modern distributed system designs.
+\end{henumerate}
+
+
+\subsection{Methodology}
+
+\paragraph{Project Management.}
+
+\paragraph{Testing.}Conduct a set of tasks which exercise core Plan 9 mechanisms such as namespace management, inter-process communication, and efficient distributed resource access. Test over a network of machines to simulate distributed system interactions. Observe functional correctness, Plan 9 adherence, and clear design patterns.
+
+%\paragraph{Dev Tools \& Environment.}FAKE BLUEPRINT WORK! Development was conducted on a Linux-based host system using QEMU to emulate target hardware during early testing and debugging. Orion is implemented primarily in C and assembly, bootstrapped using the GRUB bootloader, and built with a cross-compilation toolchain consistent with OSDev.org’s Bare Bones environment to ensure isolation from host system dependencies. While current development targets a virtualised environment, future work aims to port Orion to physical hardware, specifically a Raspberry Pi, to explore execution on a standalone embedded platform.
+
+
+
+
+
+\newpage
+\section{Plan 9}
+
+\subsection{Computing System History}
+
+\paragraph{The fall of Multics.}Slow and inevitable, it was described by Dennis Ritchie.\\
 The cessation of Bell Labs from the Multics project brought K. Thompson, D. Ritchie, M.D. McIlroy and J.F. Ossana to begin work on a new operating system. The group enjoyed the convenience of working with MIT and General Electric, yet placed greater importance on close communication and less complexity. \cite{unix-evolution}
 
-\subsubsection{The rise of UNIX}
-In 1969, the Bell Labs team began researching how to implement a much smaller operating system based on Multics' ideas, but able to run on the much smaller PDP-7 minicomputer. The following decade saw the creation of the C programming language by Ritchie, which then led to the birth of UNIX. It was adopted early by universities, research labs, and eventually industry. \cite{50-years-unix}
+\paragraph{The rise of UNIX.}In 1969, the Bell Labs team began researching how to implement a much smaller operating system based on Multics' ideas, but able to run on the much smaller PDP-7 minicomputer. The following decade saw the creation of the C programming language by Ritchie, which then led to the birth of UNIX. It was adopted early by universities, research labs, and eventually industry. \cite{50-years-unix}
 
-\subsubsection{Sunrise on Plan 9}
-The inventors and now veterans of UNIX and the C language saw the success of their system whilst elsewhere, people slowly grew tired of centralized timesharing machines. The age of personal computers with microprocessors arrived. The team from Bell Labs elaborated:
+
+\paragraph{Sunrise on Plan 9.}The inventors and now veterans of UNIX and the C language saw the success of their system whilst elsewhere, people slowly grew tired of centralized timesharing machines. The age of personal computers with microprocessors had arrived. The team from Bell Labs elaborated:
 
 ``Timesharing centralized the management and amortization of costs and resources; personal computing fractured, democratized, and ultimately amplified administrative problems. The choice of an old timesharing operating system to run those personal machines—'' \cite{pike1990plan}
 
 This evaluation of monolithic timeshared systems (UNIX) implemented on personal machines became the foundation of Plan 9.
 
-\section{Plan 9 Technology}
+\subsection{Plan 9 Technology}
 
 \subsubsection{Design}
 "Build a UNIX out of a lot of little systems, not a system out of a lot of little UNIXes"\\— Bell Labs\cite{pike1990plan}
 
-The first operating systems that ran on these modern computers were UNIX. However, as described by the creators, UNIX has trouble adapting to ideas invented after it. This led to poor implementations of key features such as networking and graphics.
-
-Bell Labs wanted the central administration of timeshared systems whilst also adopting modern personal computers to create a distributed OS for their own designs. \cite{pike1990plan}
+The first operating systems that ran on these modern computers were UNIX. However, as described by the creators, UNIX has trouble adapting to ideas invented after it. This led to poor implementations of key features such as networking and graphics. Bell Labs wanted the central administration of timeshared systems whilst also adopting modern personal computers to create a distributed OS for their own designs. \cite{pike1990plan}
 
 Plan 9 has three main philosophies which are strictly adhered to for stable and reliable development:
 
@@ -103,18 +178,9 @@ Plan 9 has three main philosophies which are strictly adhered to for stable and 
     \item The disjoint hierarchies provided by different services are joined in a single private hierarchical file namespace
 \end{enumerate}
 
-\chapter{Distributed Systems}
+\newpage
+\section{Distributed Systems}
 Present your results.
-
-\chapter{Orion: An Operating System}
-
-\section{Aims and Objectives}
-
-
-
-\section{Methodology}
-
-\section{Development}
 
 \newpage
 \printbibliography
