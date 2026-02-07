@@ -17,7 +17,7 @@
 
 // -------------------------- Port I/O Functions -------------------------- //
 
-static inline void outb(uint16_t port, uint8_t val) {
+static inline void outb(uint16_t port, uint8_t val) {			//Function to write byte to I/O port
     asm volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
