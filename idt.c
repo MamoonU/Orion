@@ -84,7 +84,7 @@ void idt_init(void) {                       //initialize idt
 }
 
 // C exception handler
-void isr_handler(uint32_t int_no, uint32_t err_code) {
+void isr_handler(uint32_t int_no, uint32_t err_code __attribute__((unused))) {
     serial_write("\n=== CPU EXCEPTION ===\n");
 
     switch (int_no) {
