@@ -4,12 +4,16 @@
 #include <stdbool.h>
 
 #include "idt.h"
-#include "gdt.h"
 #include "irq.h"
+#include "timer.h"
+#include "keyboard.h"
+#include "gdt.h"
 #include "ioport.h"
 #include "pmm.h"
 #include "multiboot.h"
 #include "vmm.h"
+#include "kheap.h"
+#include "proc.h"
 
 //Basic checks to see if x86-elf cross compiler is in use correctly
 
@@ -187,17 +191,16 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {				//Kernel 
 
 	idt_init();
 	gdt_init();
+	IRQ_init();
+
 
 	kassert(multiboot_magic == MULTIBOOT_MAGIC);
 	pmm_init(mbi, (uint32_t)(uintptr_t)&kernel_start, (uint32_t)(uintptr_t)&kernel_end);
 
 	vmm_init();
-
-	IRQ_init();
-	timer_init(100);
-	keyboard_init();
-	asm volatile ("sti");
-
+	kheap_init();
+	proc_init();
+	
 	terminal_writestring("Kernel: Online");
 
 }

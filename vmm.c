@@ -17,7 +17,7 @@ static uint32_t *page_directory = 0;
 #define PD_INDEX(virt) ((virt) >> 22)                                               // extract top 10 bits
 #define PT_INDEX(virt) (((virt) >> 12) & 0x3FFu)                                    // extract next 10 bits
 
-static *create_table(uint32_t virt, uint32_t flags) {
+static uint32_t *create_table(uint32_t virt, uint32_t flags) {
 
     uint32_t pd_idx = PD_INDEX(virt);                                           // locate PDE
 
