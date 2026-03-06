@@ -28,6 +28,7 @@ C_OBJS := \
 	kernel/proc/sched.o         \
 	kernel/proc/fork.o          \
 	kernel/proc/exec.o          \
+	kernel/fd/fd.o				\
 	kernel/syscall/syscall.o    \
 	kernel/drivers/serial.o     \
 	kernel/drivers/vga.o        \

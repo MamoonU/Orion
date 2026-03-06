@@ -64,11 +64,53 @@ static int32_t sys_exec(regs_t *r) {
     return proc_exec(p, entry);
 }
 
-// SYS_WRITE (6): write a null-terminated string to VGA
+// SYS_WRITE (6): write len bytes from buf -> fd
 static int32_t sys_write(regs_t *r) {
-    const char *msg = (const char *)r->ebx;
-    if (!msg) return -1;
-    terminal_writestring(msg);
+    int      fd  = (int)r->ebx;                                                 // extract args
+    void    *buf = (void *)r->ecx;
+    uint32_t len = r->edx;
+
+    if (!syscall_validate_ptr(buf, len)) return -1;                             // validate buffer
+
+    pcb_t *p = sched_current();                                                 // return current process
+    if (!p) return -1;
+
+    return fd_write(p->fd_table, fd, buf, len);                                 // write to fd
+}
+
+// SYS_READ (7): read  len bytes from fd -> buf
+static int32_t sys_read(regs_t *r) {
+    int      fd  = (int)r->ebx;                                                 // extract args
+    void    *buf = (void *)r->ecx;
+    uint32_t len = r->edx;
+
+    if (!syscall_validate_ptr(buf, len)) return -1;                             // validate buffer
+
+    pcb_t *p = sched_current();                                                 // return current process
+    if (!p) return -1;
+
+    return fd_read(p->fd_table, fd, buf, len);                                  // read to fd
+}
+
+// SYS_OPEN (8): open a file by path
+static int32_t sys_open(regs_t *r) {
+    (void)r;
+    kprintf("SYSCALL: sys_open - not yet implemented (needs VFS)\n");
+    return -1;
+}
+
+// SYS_CLOSE (9): close a file descriptor
+static int32_t sys_close(regs_t *r) {
+    int fd = (int)r->ebx;                                                       // read fd
+
+    if (fd < 0 || fd >= FD_MAX) return -1;
+
+    pcb_t *p = sched_current();                                                 // return current process
+    if (!p) return -1;
+
+    if (p->fd_table[fd].type == FD_NONE) return -1;                             // already closed
+
+    fd_close(p->fd_table, fd);                                                  // close fd
     return 0;
 }
 
@@ -83,6 +125,9 @@ static syscall_fn_t syscall_table[SYSCALL_COUNT] = {
     [SYS_FORK]   = sys_fork,
     [SYS_EXEC]   = sys_exec,
     [SYS_WRITE]  = sys_write,
+    [SYS_READ]   = sys_read,
+    [SYS_OPEN]   = sys_open,
+    [SYS_CLOSE]  = sys_close,
 };
 
 void syscall_dispatch(regs_t *r) {

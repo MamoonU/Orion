@@ -20,6 +20,7 @@
 #define PROC_H
 
 #include "irq.h"
+#include "fd.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -101,6 +102,8 @@ typedef struct pcb {
     // parent-child coordination
     pid_t           wait_for_pid;           // PID blocked waiting for (PID_INVALID = any child)
     uint8_t         waiting;                // 1 = blocked inside proc_wait
+
+    fd_entry_t      fd_table[FD_MAX];
 
 } pcb_t;
 

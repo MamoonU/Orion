@@ -19,3 +19,8 @@ enable_paging:
     or eax, 0x80000000  ; (set bits 31 to cr0 without changing other bits)
     mov cr0, eax        ; (write changed value back to cr0)
     ret
+global vmm_load_cr3
+vmm_load_cr3:
+    mov eax, [esp+4]
+    mov cr3, eax
+    ret
