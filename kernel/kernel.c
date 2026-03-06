@@ -29,10 +29,6 @@
 extern uint8_t kernel_start;
 extern uint8_t kernel_end;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// kernel_main
-// ─────────────────────────────────────────────────────────────────────────────
-
 void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
 
     terminal_init();

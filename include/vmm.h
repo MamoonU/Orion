@@ -27,14 +27,21 @@
 
 void vmm_init(void);
 
+// mapping funtions
 void vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags);
-
 void vmm_map_range(uint32_t virt, uint32_t phys, uint32_t length, uint32_t flags);
-
 void vmm_unmap_page(uint32_t virt);
-
 uint32_t vmm_get_phys(uint32_t virt);
-
 int vmm_is_mapped(uint32_t virt);
+
+// per-process address space functions
+uint32_t vmm_create_address_space(void);                                            // create fresh PD with kernel mappings pre-installed: return physical address
+void vmm_destroy_address_space(uint32_t pd_phys);                                   // free a process PD and its non-kernel page tables
+void vmm_switch(uint32_t pd_phys);                                                  // load pd_phys into CR3 (flush TLB)
+uint32_t vmm_get_kernel_pd(void);                                                   // return the physical address of the currently active kernel PD
+
+// validate (virt, virt+len) is fully mapped and present in the given PD
+// user_only = 1: also require VMM_USER bit (for ring-3 pointer checks)
+int vmm_range_mapped(uint32_t *pd, uint32_t virt, uint32_t len, int user_only);
 
 #endif
