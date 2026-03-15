@@ -191,6 +191,64 @@ int ns_unbind(ns_t **nsp, const char *new_path) {
     return -1;
 }
 
+// find matching bind points
+static uint32_t find_binds(const ns_t *ns, const char *path, const ns_bind_entry_t **matches, uint32_t max_matches, uint32_t *nmatches) {
+
+    uint32_t best_len = 0;                                          // init search space
+    *nmatches = 0;
+
+    for (uint32_t i = 0; i < NS_BINDS_MAX; i++) {                   // for each bind entry
+
+        if (!ns->binds[i].active) continue;                         // skip unused
+
+        // 9P hook: skip remote mounts for now (they will be handled separately once the 9P client is implemented)
+        if (ns->binds[i].srv_fd >= 0) continue;
+
+        const char *np   = ns->binds[i].new_path;                   // return bind path
+        uint32_t    nlen = (uint32_t)strlen(np);
+
+        if (strncmp(np, path, nlen) != 0) continue;                 // prefix check
+
+        // boundry check
+        int boundary = (nlen == 1 && np[0] == '/') || (path[nlen] == '/') || (path[nlen] == '\0');
+        if (!boundary) continue;
+
+        if (nlen > best_len) {                                      // longest prefix logic
+            best_len  = nlen;
+            *nmatches = 0;                                          // new best: reset set
+        }
+
+        if (nlen == best_len && *nmatches < max_matches)            // if equal lengths,
+            matches[(*nmatches)++] = &ns->binds[i];                 // store bind entry pointer
+    }
+    return best_len;                                                // return value
+}
+
+// walk remaining path from current vnode
+static vnode_t *walk_path(vnode_t *cur, const char *rest) {
+
+    char component[VFS_NAME_MAX];
+
+    // extract next component
+    while (*rest) {
+ 
+        uint32_t n = 0;
+        while (*rest && *rest != '/' && n < VFS_NAME_MAX - 1)                   // extract next component
+            component[n++] = *rest++;
+        component[n] = '\0';
+        while (*rest == '/') rest++;                                            // skip slashes
+ 
+        if (component[0] == '\0') continue;
+ 
+        if (!cur->ops || !cur->ops->lookup) return 0;                           // verify lookup operating (directories only, no files)
+ 
+        vnode_t *next = 0;
+        if (cur->ops->lookup(cur, component, &next) < 0 || !next) return 0;     // call filesystem lookup
+        cur = next;                                                             // continue walking
+    }
+    return cur;
+}
+
 // path resolution 
 vnode_t *ns_resolve(ns_t *ns, const char *path) {
 
