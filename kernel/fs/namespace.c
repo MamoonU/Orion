@@ -249,17 +249,149 @@ static vnode_t *walk_path(vnode_t *cur, const char *rest) {
     return cur;
 }
 
-// path resolution 
+// path resolution: using namespace binds + VFS
 vnode_t *ns_resolve(ns_t *ns, const char *path) {
 
+    if (!path || path[0] != '/') return 0;                                      // validate path start
+
+    if (!ns || ns->nbinds == 0) return vfs_resolve(path);                       // no namespace: fall straight through to global VFS
+
+    const ns_bind_entry_t *matches[NS_BINDS_MAX];
+    uint32_t nmatches = 0;
+    uint32_t best_len = find_binds(ns, path, matches, NS_BINDS_MAX, &nmatches); // find matching binds
+
+    if (nmatches == 0) {                                                        // if no namespace match: use global VFS
+        return vfs_resolve(path);
+    }
+
+    const char *rest = path + best_len;                                         // consume prefix: rest = remaining path components
+    while (*rest == '/') rest++;
+
+    if (*rest == '\0') {                                                        // bind match
+        for (uint32_t i = 0; i < nmatches; i++) {
+            if (matches[i]->flags == NS_BIND_BEFORE ||                          // BEFORE: highest priority
+                matches[i]->flags == NS_BIND_REPLACE)                           // REPLACE: canonical
+                return matches[i]->vnode;
+        }
+        return nmatches ? matches[0]->vnode : 0;                                // AFTER: fallback
+    }
+
+    // path continues past bind point: walk from each match in priority
+    for (int pass = 0; pass < 2; pass++) {
+        for (uint32_t i = 0; i < nmatches; i++) {
+            uint8_t f = matches[i]->flags;
+            if (pass == 0 && f == NS_BIND_AFTER)    continue;                   // defer AFTER
+            if (pass == 1 && f != NS_BIND_AFTER)    continue;                   // only AFTER
+ 
+            vnode_t *result = walk_path(matches[i]->vnode, rest);
+            if (result) return result;
+        }
+    }
+    return vfs_resolve(path);                                                   // nothing in bind table resolved: global VFS fallback
 }
 
-// handle union directory listing
+#define NS_UNION_MAX 128                        // max merged entries across all union layers
+
+// merge union directory listings
 int ns_readdir(ns_t *ns, const char *dir_path, uint32_t index, char *name_out, uint32_t name_max, vnode_t **node_out) {
 
-}
+    if (!dir_path || !name_out || name_max == 0) return -1;
 
+    // collect all vnodes at dir_path in priority order:
+    vnode_t *layers[NS_BINDS_MAX + 1];
+    uint32_t nlayers = 0;
+
+    const ns_bind_entry_t *matches[NS_BINDS_MAX];
+    uint32_t nmatches = 0;
+
+    if (ns && ns->nbinds > 0)
+        find_binds(ns, dir_path, matches, NS_BINDS_MAX, &nmatches);
+ 
+    for (uint32_t i = 0; i < nmatches; i++) {                                           // pass 1: BEFORE
+        if (matches[i]->flags == NS_BIND_BEFORE && nlayers < NS_BINDS_MAX)
+            layers[nlayers++] = matches[i]->vnode;
+    }
+
+    uint8_t have_replace = 0;
+    for (uint32_t i = 0; i < nmatches; i++) {                                           // REPLACE or global VFS
+        if (matches[i]->flags == NS_BIND_REPLACE) {
+            if (nlayers < NS_BINDS_MAX) layers[nlayers++] = matches[i]->vnode;
+            have_replace = 1;
+        }
+    }
+    if (!have_replace) {                                                                // try the global VFS at this path
+        vnode_t *gv = vfs_resolve(dir_path);
+        if (gv && gv->type == VNODE_DIR && nlayers < NS_BINDS_MAX)
+            layers[nlayers++] = gv;
+    }
+
+    for (uint32_t i = 0; i < nmatches; i++) {                                           // pass 2: AFTER
+        if (matches[i]->flags == NS_BIND_AFTER && nlayers < NS_BINDS_MAX)
+            layers[nlayers++] = matches[i]->vnode;
+    }
+
+    if (nlayers == 0) return -1;
+
+    // iterate merged entries, deduplicating by name, until we hit `index`
+    char   seen[NS_UNION_MAX][VFS_NAME_MAX];
+    uint32_t nseen  = 0;
+    uint32_t logical = 0;
+
+    for (uint32_t li = 0; li < nlayers; li++) {
+
+        vnode_t *v = layers[li];
+        if (!v || !v->ops || !v->ops->readdir) continue;
+
+        uint32_t raw = 0;
+        while (1) {
+            char     entry_name[VFS_NAME_MAX];
+            vnode_t *entry_node = 0;
+
+            if (v->ops->readdir(v, raw, entry_name, &entry_node) < 0) break;
+            raw++;
+
+            uint8_t dup = 0;                                                            // dedup check
+            for (uint32_t s = 0; s < nseen; s++) {
+                if (strcmp(seen[s], entry_name) == 0) { dup = 1; break; }
+            }
+            if (dup) continue;
+
+            if (nseen < NS_UNION_MAX)
+                strncpy(seen[nseen++], entry_name, VFS_NAME_MAX - 1);
+ 
+            if (logical == index) {
+                strncpy(name_out, entry_name, name_max - 1);
+                name_out[name_max - 1] = '\0';
+                if (node_out) *node_out = entry_node;
+                return 0;
+            }
+            logical++;
+        }
+    }
+    return -1;                      // index beyond end of merged directory
+}
+ 
 // debug
 void ns_dump(const ns_t *ns) {
 
+    if (!ns) {
+        kprintf("NS: (null namespace - using global VFS)\n");
+        return;
+    }
+
+    kprintf("NS: namespace @ 0x%p  refcount=%u  binds=%u\n",
+            (uint32_t)ns, ns->refcount, ns->nbinds);
+
+    for (uint32_t i = 0; i < NS_BINDS_MAX; i++) {
+        const ns_bind_entry_t *e = &ns->binds[i];
+        if (!e->active) continue;
+
+        const char *flag_str =
+            (e->flags == NS_BIND_BEFORE)  ? "before" :
+            (e->flags == NS_BIND_AFTER)   ? "after"  : "replace";
+
+        kprintf("  [%2u] %-24s -> vnode=0x%p  mode=%s%s\n",
+                i, e->new_path, (uint32_t)e->vnode, flag_str,
+                (e->srv_fd >= 0) ? " (9P)" : "");
+    }
 }
