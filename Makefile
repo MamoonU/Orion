@@ -28,6 +28,7 @@ C_OBJS := \
 	kernel/fs/ramfs.o           \
 	kernel/fs/devfs.o           \
 	kernel/fs/pipe.o            \
+	kernel/fs/namespace.o		\
 	kernel/proc/proc.o          \
 	kernel/proc/sched.o         \
 	kernel/proc/fork.o          \

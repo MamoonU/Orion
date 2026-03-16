@@ -8,6 +8,7 @@
 #include "string.h"
 #include "sched.h"
 #include "fd.h"
+#include "namespace.h"
 
 static pcb_t proc_table[MAX_PROCS];                                                                     // fixed size array
 
@@ -151,7 +152,7 @@ pcb_t *proc_create(const char *name, uint8_t priority) {
     // filesystem context: inherit from parent when forking, else default to root
     strncpy(p->cwd_path, "/", VFS_PATH_MAX - 1);
     p->cwd_path[VFS_PATH_MAX - 1] = '\0';
-    p->ns_root = 0;                         // NULL = global VFS; replaced per-process when namespaces land
+    p->namespace = ns_create();                             // fresh namespace
 
     kprintf("PROC: created [%u] \"%s\" prio=%u quantum=%u kstack=0x%p\n", (uint32_t)pid, p->name, (uint32_t)priority, tslice, (uint32_t)kstack);
     return p;
@@ -235,6 +236,8 @@ void proc_destroy(pcb_t *p) {
     }
 
     fd_table_close_all(p->fd_table);
+    ns_unref(p->namespace);
+    p->namespace = 0;
     pid_free(p->pid);
 
     pid_t saved_pid = p->pid;
@@ -304,6 +307,11 @@ void proc_dump(const pcb_t *p) {
     if (p->state == PROC_ZOMBIE) {
         kprintf("  |  exit_code    = %u\n", (uint32_t)p->exit_code);
     }
+    kprintf("  |  cwd          = \"%s\"\n", p->cwd_path);
+    kprintf("  |  namespace    = 0x%p (%u binds, refcount=%u)\n",
+            (uint32_t)p->namespace,
+            p->namespace ? p->namespace->nbinds  : 0u,
+            p->namespace ? p->namespace->refcount : 0u);
 
     kprintf("  +---------------------------------\n");
 }

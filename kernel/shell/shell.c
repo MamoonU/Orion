@@ -1,13 +1,10 @@
 // shell.c - Orion Shell
 
-// built-ins : echo, pwd, cd, ls, cat, mkdir, help, clear
-
-// namespace / 9P / network hooks marked TODO throughout so extending obvious when subsystems land
-
 #include "shell.h"
 #include "proc.h"
 #include "sched.h"
 #include "vfs.h"
+#include "namespace.h"
 #include "fd.h"
 #include "kprintf.h"
 #include "string.h"
@@ -115,7 +112,12 @@ static void builtin_help(void) {
     sh_write("  mkdir <path>       create directory\n");
     sh_write("  clear              clear screen\n");
     sh_write("  ps                 list processes (placeholder)\n");
-    // TODO(namespaces): bind <src> <dst>  - rebind a path in the local namespace
+    sh_write("  bind [-b|-a] <src> <dst>   bind src into namespace at dst\n");
+    sh_write("                             -b = before (union prepend)\n");
+    sh_write("                             -a = after  (union append)\n");
+    sh_write("                             default = replace\n");
+    sh_write("  unbind <dst>               remove all bindings at dst\n");
+    sh_write("  nsdump                     dump this process's namespace\n");
     // TODO(9p)        : mount <srv> <dst> - attach a 9P server to the namespace
     // TODO(network)   : dial <addr>       - open a network connection via /net
 }
@@ -147,11 +149,10 @@ static void builtin_cd(int argc, char **argv) {
     pcb_t *p = sched_current();
     if (!p) return;
 
-    // TODO(namespaces): resolve against p->ns_root instead of global root.
     char resolved[VFS_PATH_MAX];
     vfs_path_resolve(p->cwd_path, target, resolved);                                // resolve path using the VFS helper
 
-    vnode_t *v = vfs_resolve(resolved);                                             // locate vnode
+    vnode_t *v = ns_resolve(p->namespace, resolved);                               // locate vnode
     if (!v) {
         sh_write("cd: no such directory: ");
         sh_write(target);
@@ -178,9 +179,7 @@ static void builtin_ls(int argc, char **argv) {
     const char *target = (argc >= 2) ? argv[1] : p->cwd_path;
     vfs_path_resolve(p->cwd_path, target, resolved);                                // resolve path 
 
-    // TODO(namespaces): resolve against p->ns_root for per-process view.
-
-    vnode_t *v = vfs_resolve(resolved);                                             // resolve vnode
+    vnode_t *v = ns_resolve(p->namespace, resolved);                                             // resolve vnode
     if (!v) {
         sh_write("ls: no such path: ");
         sh_write(resolved);
@@ -196,17 +195,12 @@ static void builtin_ls(int argc, char **argv) {
         return;
     }
 
-    file_t *f = vfs_open_vnode(v, O_RDONLY);                                        // open directory
-    if (!f) {
-        sh_write("ls: cannot open directory\n");
-        return;
-    }
+    char     name_buf[VFS_NAME_MAX];
+    vnode_t *child = 0;
+    uint32_t index = 0;
 
-    char        name_buf[VFS_NAME_MAX];
-    vnode_t    *child = 0;
-    uint32_t    index = 0;
-
-    while (vfs_readdir(f, index, name_buf, VFS_NAME_MAX, &child) == 0) {            // iterate entries
+    while (ns_readdir(p->namespace, resolved, index,
+                      name_buf, VFS_NAME_MAX, &child) == 0) {
         sh_write("  ");
         sh_write(name_buf);
         if (child && child->type == VNODE_DIR) sh_putchar('/');
@@ -214,7 +208,6 @@ static void builtin_ls(int argc, char **argv) {
         index++;
     }
     if (index == 0) sh_write("  (empty)\n");
-    vfs_close(f);
 }
 
 // built-in: cat (read file parameters in sequence -> write to stdout)
@@ -231,7 +224,14 @@ static void builtin_cat(int argc, char **argv) {
     char resolved[VFS_PATH_MAX];
     vfs_path_resolve(p->cwd_path, argv[1], resolved);                               // resolve path
 
-    file_t *f = vfs_open(resolved, O_RDONLY);                                       // open file
+    vnode_t *v = ns_resolve(p->namespace, resolved);
+    if (!v) {
+        sh_write("cat: cannot open: ");
+        sh_write(argv[1]);
+        sh_putchar('\n');
+        return;
+    }
+    file_t *f = vfs_open_vnode(v, O_RDONLY);
     if (!f) {                                                                       // handle failure
         sh_write("cat: cannot open: ");
         sh_write(argv[1]);
@@ -285,13 +285,79 @@ static void builtin_clear(void) {
     terminal_clear();
 }
 
+// built-in: bind
+static void builtin_bind(int argc, char **argv) {
 
-// External program execution
-// TODO(userland): this stub will become:
-// 1. vfs_open(resolved) to find the ELF binary
-// 2. proc_fork() to clone the shell
-// 3. In the child: elf_execve(f, argc, argv) to replace the image
-// 4. In the parent: proc_wait(child_pid, &code)
+    if (argc < 3) {
+        sh_write("usage: bind [-b|-a] <src> <dst>\n");
+        return;
+    }
+
+    pcb_t *p = sched_current();
+    if (!p) return;
+
+    uint8_t     flags   = NS_BIND_REPLACE;
+    const char *src_arg = argv[1];
+    const char *dst_arg = argv[2];
+
+    if (argc >= 4 && argv[1][0] == '-') {
+        if      (argv[1][1] == 'b') flags = NS_BIND_BEFORE;
+        else if (argv[1][1] == 'a') flags = NS_BIND_AFTER;
+        else {
+            sh_write("bind: unknown flag (use -b or -a): ");
+            sh_write(argv[1]);
+            sh_putchar('\n');
+            return;
+        }
+        src_arg = argv[2];
+        dst_arg = argv[3];
+    }
+
+    char src_resolved[VFS_PATH_MAX];
+    char dst_resolved[VFS_PATH_MAX];
+    vfs_path_resolve(p->cwd_path, src_arg, src_resolved);
+    vfs_path_resolve(p->cwd_path, dst_arg, dst_resolved);
+
+    vnode_t *v = ns_resolve(p->namespace, src_resolved);
+    if (!v) {
+        sh_write("bind: no such path: ");
+        sh_write(src_arg);
+        sh_putchar('\n');
+        return;
+    }
+
+    if (ns_bind(&p->namespace, v, dst_resolved, flags) < 0)
+        sh_write("bind: failed (namespace table full?)\n");
+}
+
+// built-in: unbind
+static void builtin_unbind(int argc, char **argv) {
+
+    if (argc < 2) {
+        sh_write("usage: unbind <dst>\n");
+        return;
+    }
+
+    pcb_t *p = sched_current();
+    if (!p) return;
+
+    char resolved[VFS_PATH_MAX];
+    vfs_path_resolve(p->cwd_path, argv[1], resolved);
+
+    if (ns_unbind(&p->namespace, resolved) < 0) {
+        sh_write("unbind: no binding at: ");
+        sh_write(argv[1]);
+        sh_putchar('\n');
+    }
+}
+
+// built-in: namespace dump
+static void builtin_nsdump(void) {
+    pcb_t *p = sched_current();
+    if (!p) return;
+    ns_dump(p->namespace);
+}
+
 static void sh_exec_external(int argc, char **argv) {
 
     (void)argc;
@@ -309,16 +375,19 @@ static void sh_dispatch(int argc, char **argv) {
 
     if (argc == 0) return;
 
-    if      (strcmp(argv[0], "help" ) == 0) builtin_help();
-    else if (strcmp(argv[0], "echo" ) == 0) builtin_echo(argc, argv);
-    else if (strcmp(argv[0], "pwd"  ) == 0) builtin_pwd();
-    else if (strcmp(argv[0], "cd"   ) == 0) builtin_cd(argc, argv);
-    else if (strcmp(argv[0], "ls"   ) == 0) builtin_ls(argc, argv);
-    else if (strcmp(argv[0], "cat"  ) == 0) builtin_cat(argc, argv);
-    else if (strcmp(argv[0], "mkdir") == 0) builtin_mkdir(argc, argv);
-    else if (strcmp(argv[0], "ps"   ) == 0) builtin_ps();
-    else if (strcmp(argv[0], "clear") == 0) builtin_clear();
-    else                                    sh_exec_external(argc, argv);
+    if      (strcmp(argv[0], "help"   ) == 0) builtin_help();
+    else if (strcmp(argv[0], "echo"   ) == 0) builtin_echo(argc, argv);
+    else if (strcmp(argv[0], "pwd"    ) == 0) builtin_pwd();
+    else if (strcmp(argv[0], "cd"     ) == 0) builtin_cd(argc, argv);
+    else if (strcmp(argv[0], "ls"     ) == 0) builtin_ls(argc, argv);
+    else if (strcmp(argv[0], "cat"    ) == 0) builtin_cat(argc, argv);
+    else if (strcmp(argv[0], "mkdir"  ) == 0) builtin_mkdir(argc, argv);
+    else if (strcmp(argv[0], "ps"     ) == 0) builtin_ps();
+    else if (strcmp(argv[0], "clear"  ) == 0) builtin_clear();
+    else if (strcmp(argv[0], "bind"   ) == 0) builtin_bind(argc, argv);
+    else if (strcmp(argv[0], "unbind" ) == 0) builtin_unbind(argc, argv);
+    else if (strcmp(argv[0], "nsdump" ) == 0) builtin_nsdump();
+    else                                      sh_exec_external(argc, argv);
 }
 
 // shell entry point

@@ -12,7 +12,7 @@ static uint32_t count_at(const ns_t *ns, const char *new_path) {
     uint32_t n = 0;
 
     for (uint32_t i = 0; i < NS_BINDS_MAX; i++) {
-        if (ns->binds[i].active && strcmp(ns->binds[i].new_path) == 0)
+        if (ns->binds[i].active && strcmp(ns->binds[i].new_path, new_path) == 0)
         n++;
     }
     return n;
@@ -390,7 +390,7 @@ void ns_dump(const ns_t *ns) {
             (e->flags == NS_BIND_BEFORE)  ? "before" :
             (e->flags == NS_BIND_AFTER)   ? "after"  : "replace";
 
-        kprintf("  [%2u] %-24s -> vnode=0x%p  mode=%s%s\n",
+        kprintf("  [%2u] %s -> vnode=0x%p  mode=%s%s\n",
                 i, e->new_path, (uint32_t)e->vnode, flag_str,
                 (e->srv_fd >= 0) ? " (9P)" : "");
     }
