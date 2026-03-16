@@ -329,6 +329,17 @@ static int32_t sys_mount(regs_t *r) {
     return pulsar_mount(srv_fd, path, ns_flags);
 }
 
+// SYS_SBRK (21): extend the calling process's heap by `increment` bytes
+static int32_t sys_sbrk(regs_t *r) {
+    uint32_t increment = r->ebx;
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+ 
+    // TODO(usermode): allocate pages at p->heap_top, increment it, return old top.
+    (void)increment;
+    return -1;
+}
+
 typedef int32_t (*syscall_fn_t)(regs_t *);
 
 // define dispatch table
@@ -354,6 +365,7 @@ static syscall_fn_t syscall_table[SYSCALL_COUNT] = {
     [SYS_UNBIND]  = sys_unbind,
     [SYS_NSDUMP]  = sys_nsdump,
     [SYS_MOUNT]   = sys_mount,
+    [SYS_SBRK]    = sys_sbrk,
 };
 
 void syscall_dispatch(regs_t *r) {

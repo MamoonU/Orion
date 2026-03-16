@@ -187,7 +187,7 @@ int ns_unbind(ns_t **nsp, const char *new_path) {
         return 0;
     }
 
-    kprintf("NS: unbind \"%s\" — not found\n", new_path);
+    kprintf("NS: unbind \"%s\" - not found\n", new_path);
     return -1;
 }
 
