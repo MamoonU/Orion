@@ -166,33 +166,156 @@ static int pulse_check(const uint8_t *buf, int len, uint8_t expected_type, uint1
     return 0;
 }
 
+// tag allocation
+static uint16_t alloc_tag(pulsar_session_t *s) {
+    uint16_t t = s->next_tag++;
+    if (t == PULSAR_NOTAG) t = s->next_tag++;
+    return t;
+}
 
+// allocate beam: new beam ID + track
+uint32_t pulsar_beam_alloc(pulsar_session_t *s) {
 
+    for (uint32_t i = 0; i < PULSAR_BEAM_MAX; i++) {
+        if (!s->beam_live[i]) {                                     // find free entry
+            uint32_t id = s->next_beam++;
+            if (id == PULSAR_NOBEAM) id = s->next_beam++;           // allocate new beam ID
+            s->beam_id  [i] = id;
+            s->beam_live[i] = 1;
+            return id;
+        }
+    }
+    kprintf("PULSAR: beam_alloc - table full (max %u)\n", (uint32_t)PULSAR_BEAM_MAX);
+    return PULSAR_NOBEAM;
+}
 
+// release beam: remove beam ID from local table
+void pulsar_beam_free(pulsar_session_t *s, uint32_t beam) {
 
+    for (uint32_t i = 0; i < PULSAR_BEAM_MAX; i++) {                // loop through beams
+        if (s->beam_live[i] && s->beam_id[i] == beam) {
+            s->beam_live[i] = 0;                                    // remove local beam
+            return;
+        }
+    }
+}
 
+// release beam: network operation
+int pulsar_release(pulsar_session_t *s, uint32_t beam) {
 
+    uint16_t tag = alloc_tag(s);                                    // allocate tag
+    uint32_t pos = 0;
+    pulse_begin(s_send_buf, EMIT_RELEASE, tag, &pos);               // build message
+    put_u32(s_send_buf, &pos, beam);
 
+    if (pulse_send(s, s_send_buf, pos) < 0) return -1;              // send request
 
+    int len = pulse_recv(s, s_recv_buf);                            // recieve reply
+    if (pulse_check(s_recv_buf, len, ECHO_RELEASE, tag) < 0) return -1;
 
+    pulsar_beam_free(s, beam);                                      // free local beam
+    return 0;
+}
 
+// create pulsar session
+pulsar_session_t *pulsar_session_create(file_t *srv_file) {
 
+    pulsar_session_t *s = kmalloc(sizeof(pulsar_session_t));                            // allocate session
+    if (!s) return 0;
 
+    for (uint32_t i = 0; i < sizeof(pulsar_session_t); i++) ((uint8_t *)s)[i] = 0;      // zero memory
 
+    // initialise fields
+    s->srv_file  = srv_file;
+    s->msize     = PULSAR_MSIZE;
+    s->next_tag  = 1;
+    s->next_beam = 1;
+    s->attached  = 0;
+    s->root_beam = PULSAR_NOBEAM;
 
+    // EMIT_HAIL (check version & msize)
+    uint32_t pos = 0;
+    pulse_begin(s_send_buf, EMIT_HAIL, PULSAR_NOTAG, &pos);
+    put_u32(s_send_buf, &pos, PULSAR_MSIZE);
+    put_str(s_send_buf, &pos, PULSAR_VERSION);
 
+    if (pulse_send(s, s_send_buf, pos) < 0) {
+        kprintf("PULSAR: session_create — EMIT_HAIL send failed\n");
+        kfree(s);
+        return 0;
+    }
 
+    int len = pulse_recv(s, s_recv_buf);
+    if (pulse_check(s_recv_buf, len, ECHO_HAIL, PULSAR_NOTAG) < 0) {
+        kprintf("PULSAR: session_create — ECHO_HAIL failed\n");
+        kfree(s);
+        return 0;
+    }
 
+    // parse ECHO_HAIL body
+    pos = PULSAR_HDR;
+    uint32_t server_msize = get_u32(s_recv_buf, &pos);                                  // parsing msize
+    char     ver[16];                                                                   // parsing version
+    get_str(s_recv_buf, &pos, ver, sizeof(ver));
 
+    // accept smaller of two msizes
+    if (server_msize < s->msize) s->msize = server_msize;
 
+    kprintf("PULSAR: session created — version=\"%s\" msize=%u\n", ver, s->msize);
+    return s;
+}
 
+// attach pulsar session to filesystem root
+int pulsar_session_attach(pulsar_session_t *s, const char *aname) {
 
+    if (!s) return -1;
 
+    uint32_t root = pulsar_beam_alloc(s);                                           // allocate root beam
+    if (root == PULSAR_NOBEAM) return -1;
 
+    uint16_t tag = alloc_tag(s);
+    uint32_t pos = 0;
+    pulse_begin(s_send_buf, EMIT_DOCK, tag, &pos);                                  // EMIT_DOCK: build request
+    put_u32(s_send_buf, &pos, root);                                                // root beam fid
+    put_u32(s_send_buf, &pos, PULSAR_NOBEAM);                                       // authentication fid = NOBEAM (no auth)
+    put_str(s_send_buf, &pos, "");                                                  // uname (kernel mounts as "")
+    put_str(s_send_buf, &pos, aname ? aname : "");                                  // aname (filesystem name)
 
+    if (pulse_send(s, s_send_buf, pos) < 0) {
+        pulsar_beam_free(s, root);
+        return -1;
+    }
 
+    int len = pulse_recv(s, s_recv_buf);
+    if (pulse_check(s_recv_buf, len, ECHO_DOCK, tag) < 0) {                         // ECHO_DOCK = returns SIGNAT
+        pulsar_beam_free(s, root);
+        return -1;
+    }
 
+    // parse ECHO_DOCK body
+    pos = PULSAR_HDR;
+    pulsar_signat_t sig;
+    get_signat(s_recv_buf, &pos, &sig);
 
+    s->root_beam = root;                                                            // update session
+    s->attached  = 1;
+
+    kprintf("PULSAR: attached — root_beam=%u signat.path=0x%p\n", root, (uint32_t)(uint32_t)sig.path);
+    return 0;
+}
+
+// destroy pulsar session 
+void pulsar_session_destroy(pulsar_session_t *s) {
+ 
+    if (!s) return;
+
+    for (uint32_t i = 0; i < PULSAR_BEAM_MAX; i++) {            // loop through beams
+        if (s->beam_live[i]) pulsar_release(s, s->beam_id[i]);  // release all beams
+    }
+
+    kprintf("PULSAR: session destroyed\n");
+    kfree(s);
+}
 
 // EMIT_TRAVERSE: clone src_beam into new_beam, walking path components
 int pulsar_traverse(pulsar_session_t *s, uint32_t src_beam, uint32_t new_beam, const char **components, uint32_t ncomp, pulsar_signat_t *signat_out) {
