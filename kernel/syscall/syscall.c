@@ -11,6 +11,8 @@
 #include "pipe.h"
 #include "elf.h"
 #include "string.h"
+#include "namespace.h"
+#include "pulsar.h"
 
 // user pointer validation
 static int syscall_validate_ptr(const void *ptr, uint32_t len) {
@@ -263,6 +265,70 @@ static int32_t sys_readdir(regs_t *r) {
     return vfs_readdir(f, index, name_buf, buflen, 0);
 }
 
+// SYS_BIND (17)
+static int32_t sys_bind(regs_t *r) {
+
+    const char *src_path = (const char *)r->ebx;
+    const char *new_path = (const char *)r->ecx;
+    uint8_t     flags    = (uint8_t)r->edx;
+
+    if (!syscall_validate_ptr(src_path, 1)) return -1;
+    if (!syscall_validate_ptr(new_path, 1)) return -1;
+    if (flags > NS_BIND_AFTER) return -1;
+
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+
+    char src_resolved[VFS_PATH_MAX];
+    char dst_resolved[VFS_PATH_MAX];
+
+    vfs_path_resolve(p->cwd_path, src_path, src_resolved);
+    vfs_path_resolve(p->cwd_path, new_path, dst_resolved);
+
+    vnode_t *v = ns_resolve(p->namespace, src_resolved);
+    if (!v) return -1;
+    return ns_bind(&p->namespace, v, dst_resolved, flags);
+}
+
+// SYS_UNBIND (18)
+static int32_t sys_unbind(regs_t *r) {
+
+    const char *new_path = (const char *)r->ebx;
+    if (!syscall_validate_ptr(new_path, 1)) return -1;
+
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+
+    char resolved[VFS_PATH_MAX];
+
+    vfs_path_resolve(p->cwd_path, new_path, resolved);
+    return ns_unbind(&p->namespace, resolved);
+}
+
+// SYS_NSDUMP (19)
+static int32_t sys_nsdump(regs_t *r) {
+
+    (void)r;
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+
+    ns_dump(p->namespace);
+    return 0;
+}
+
+// SYS_MOUNT (20): create a PULSAR session over srv_fd and mount at path
+static int32_t sys_mount(regs_t *r) {
+
+    int         srv_fd   = (int)r->ebx;
+    const char *path     = (const char *)r->ecx;
+    uint8_t     ns_flags = (uint8_t)r->edx;
+
+    if (!syscall_validate_ptr(path, 1)) return -1;
+    if (ns_flags > NS_BIND_AFTER) return -1;
+
+    return pulsar_mount(srv_fd, path, ns_flags);
+}
+
 typedef int32_t (*syscall_fn_t)(regs_t *);
 
 // define dispatch table
@@ -284,6 +350,10 @@ static syscall_fn_t syscall_table[SYSCALL_COUNT] = {
     [SYS_CHDIR]   = sys_chdir,
     [SYS_GETCWD]  = sys_getcwd,
     [SYS_READDIR] = sys_readdir,
+    [SYS_BIND]    = sys_bind,
+    [SYS_UNBIND]  = sys_unbind,
+    [SYS_NSDUMP]  = sys_nsdump,
+    [SYS_MOUNT]   = sys_mount,
 };
 
 void syscall_dispatch(regs_t *r) {

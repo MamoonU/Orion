@@ -3,6 +3,12 @@
 #include "pulsar.h"
 #include "namespace.h"
 #include "vfs.h"
+#include "proc.h"
+#include "sched.h"
+#include "fd.h"
+#include "kheap.h"
+#include "string.h"
+#include "kprintf.h"
 
 // encoding helpers
 static void put_u8 (uint8_t *b, uint32_t *p, uint8_t  v) {                      // write 1 byte
@@ -647,41 +653,86 @@ static int pulsar_vfs_readdir(vnode_t *dir, uint32_t index, char *name_out, vnod
     return 0;
 }
 
+// VFS operations table (for vnodes belonging to PULSAR)
+static vfs_ops_t pulsar_ops = {
+    .open    = pulsar_vfs_open,
+    .close   = pulsar_vfs_close,
+    .read    = pulsar_vfs_read,
+    .write   = pulsar_vfs_write,
+    .lookup  = pulsar_vfs_lookup,
+    .create  = 0,                   // TODO(pulsar): EMIT_CREATE
+    .mkdir   = 0,                   // TODO(pulsar): EMIT_CREATE with DMDIR flag
+    .unlink  = 0,                   // TODO(pulsar): EMIT_REMOVE
+    .readdir = pulsar_vfs_readdir,
+};
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// allocate a VFS vnode backed by (session, beam): vnode_type = file/dir
+// allocate PULSAR vnode: convert PULSAR beam (FID) -> VFS node
 vnode_t *pulsar_vnode_create(pulsar_session_t *s, uint32_t beam, uint8_t vnode_type) {
 
+    pulsar_vdata_t *vd = kmalloc(sizeof(pulsar_vdata_t));   // pulsar metadata lookup
+    if (!vd) return 0;
 
+    // initialise fields
+    vd->session     = s;        // session
+    vd->beam        = beam;     // beam
+    vd->beam_opened = 0;        // beam opened?
+    vd->dir_names   = 0;        // directory names
+    vd->dir_count   = 0;        // directory count
+    vd->dir_loaded  = 0;        // directory loaded
 
+    vnode_t *v = vnode_alloc(vnode_type, &pulsar_ops, vd);  // allocate new VFS vnode
+    if (!v) { kfree(vd); return 0; }
+    return v;
 }
 
-// create session from fd number in the current process's fd table -> attach -> bind server root at path in process namespace
+// mount PULSAR
 int pulsar_mount(int srv_fd, const char *path, uint8_t ns_flags) {
 
+    pcb_t *p = sched_current();                                 // return current process
+    if (!p) return -1;
 
+    if (srv_fd < 0 || srv_fd >= FD_MAX) return -1;              // validate fd
+    file_t *srv_file = p->fd_table[srv_fd];                     // server file
+    if (!srv_file) {
+        kprintf("PULSAR: mount - bad fd %d\n", srv_fd);
+        return -1;
+    }
 
+    pulsar_session_t *s = pulsar_session_create(srv_file);      // create pulsar session
+    if (!s) {
+        kprintf("PULSAR: mount - session_create failed\n");
+        return -1;
+    }
 
+    if (pulsar_session_attach(s, "") < 0) {                     // attach to server root
+        kprintf("PULSAR: mount - attach failed\n");
+        pulsar_session_destroy(s);
+        return -1;
+    }
+
+    vnode_t *root_vnode = pulsar_vnode_create(s, s->root_beam, VNODE_DIR);  // wrap root beam into a VFS vnode
+    if (!root_vnode) {
+        pulsar_session_destroy(s);
+        return -1;
+    }
+
+    char resolved[VFS_PATH_MAX];                                // normalise destination path against cwd
+    vfs_path_resolve(p->cwd_path, path, resolved);              // convert: relative path -> absolute path
+
+    if (ns_bind(&p->namespace, root_vnode, resolved, ns_flags) < 0) {       // bind into process namespace
+        kprintf("PULSAR: mount - ns_bind failed\n");
+        pulsar_session_destroy(s);
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < NS_BINDS_MAX; i++) {               // tag bind entry so nsdump shows it as PULSAR
+        ns_bind_entry_t *e = &p->namespace->binds[i];
+        if (e->active && e->vnode == root_vnode && strcmp(e->new_path, resolved) == 0) {
+            
+            e->srv_fd = srv_fd;                                 // bind metadata
+            break;
+        }
+    }
+    kprintf("PULSAR: mounted fd=%d at \"%s\"\n", srv_fd, resolved);
+    return 0;
 }

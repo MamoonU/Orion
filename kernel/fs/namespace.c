@@ -201,9 +201,6 @@ static uint32_t find_binds(const ns_t *ns, const char *path, const ns_bind_entry
 
         if (!ns->binds[i].active) continue;                         // skip unused
 
-        // 9P hook: skip remote mounts for now (they will be handled separately once the 9P client is implemented)
-        if (ns->binds[i].srv_fd >= 0) continue;
-
         const char *np   = ns->binds[i].new_path;                   // return bind path
         uint32_t    nlen = (uint32_t)strlen(np);
 
