@@ -21,6 +21,7 @@
 
 #include "irq.h"
 #include "fd.h"
+#include "namespace.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -103,6 +104,10 @@ typedef struct pcb {
 
     // file descriptors
     file_t          *fd_table[FD_MAX];
+
+    // filesystem context (future: per-process 9P namespace binding point)
+    char            cwd_path[VFS_PATH_MAX]; // current working directory (absolute path)
+    ns_t        *namespace;              // namespace root vnode (NULL = global VFS root)
 
 } pcb_t;
 

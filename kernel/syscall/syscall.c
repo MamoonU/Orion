@@ -10,6 +10,7 @@
 #include "vfs.h"
 #include "pipe.h"
 #include "elf.h"
+#include "string.h"
 
 // user pointer validation
 static int syscall_validate_ptr(const void *ptr, uint32_t len) {
@@ -207,6 +208,61 @@ static int32_t sys_wait(regs_t *r) {
     return (result == PID_INVALID) ? -1 : (int32_t)result;
 }
 
+// SYS_CHDIR (14): change calling process's working directory
+static int32_t sys_chdir(regs_t *r) {
+ 
+    const char *path = (const char *)r->ebx;
+    if (!syscall_validate_ptr(path, 1)) return -1;
+ 
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+ 
+    char resolved[VFS_PATH_MAX];
+    vfs_path_resolve(p->cwd_path, path, resolved);     // handles relative + absolute + normalisation
+ 
+    vnode_t *v = vfs_resolve(resolved);
+    if (!v || v->type != VNODE_DIR) return -1;          // must resolve to a real directory
+ 
+    strncpy(p->cwd_path, resolved, VFS_PATH_MAX - 1);
+    p->cwd_path[VFS_PATH_MAX - 1] = '\0';
+    return 0;
+}
+
+// SYS_GETCWD (15): copy cwd string into caller-supplied buffer
+static int32_t sys_getcwd(regs_t *r) {
+ 
+    char    *buf = (char *)r->ebx;
+    uint32_t len = r->ecx;
+ 
+    if (!syscall_validate_ptr(buf, len) || len == 0) return -1;
+ 
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+ 
+    strncpy(buf, p->cwd_path, len - 1);
+    buf[len - 1] = '\0';
+    return 0;
+}
+ 
+// SYS_READDIR (16): read one directory entry by index from an open dir fd
+static int32_t sys_readdir(regs_t *r) {
+ 
+    int      fd       = (int)r->ebx;
+    uint32_t index    = r->ecx;
+    char    *name_buf = (char *)r->edx;
+    uint32_t buflen   = r->esi;
+ 
+    if (!syscall_validate_ptr(name_buf, buflen) || buflen == 0) return -1;
+ 
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+ 
+    file_t *f = (fd >= 0 && fd < FD_MAX) ? p->fd_table[fd] : 0;
+    if (!f) return -1;
+ 
+    return vfs_readdir(f, index, name_buf, buflen, 0);
+}
+
 typedef int32_t (*syscall_fn_t)(regs_t *);
 
 // define dispatch table
@@ -225,6 +281,9 @@ static syscall_fn_t syscall_table[SYSCALL_COUNT] = {
     [SYS_DUP2]   = sys_dup2,
     [SYS_EXECVE] = sys_execve,
     [SYS_WAIT]   = sys_wait,
+    [SYS_CHDIR]   = sys_chdir,
+    [SYS_GETCWD]  = sys_getcwd,
+    [SYS_READDIR] = sys_readdir,
 };
 
 void syscall_dispatch(regs_t *r) {

@@ -20,15 +20,25 @@ static int kbd_read(vnode_t *v, void *buf, uint32_t len, uint32_t offset) {
 
     // block until at least one character is available
     while (!keyboard_has_char()) {
+
         pcb_t *self = sched_current();
         if (!self) return 0;
+
+        keyboard_set_waiter((uint16_t)self->pid);       // register waiter before disabling interrupts
+        asm volatile("cli");
+
+        if (keyboard_has_char()) {
+            keyboard_set_waiter(0xFFFF);
+            asm volatile("sti");
+            break;
+        }
+
         self->state = PROC_BLOCKED;
         sched_remove(self);
-        // store PID so the IRQ handler can wake us
-        keyboard_set_waiter((uint16_t)self->pid);
+
+        keyboard_set_waiter((uint16_t)self->pid);       // store PID so the IRQ handler can wake
         sched_yield();
     }
-
     while (n < len && keyboard_has_char())              // read from kb buffer
         out[n++] = keyboard_getchar();
     return (int)n;

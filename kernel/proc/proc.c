@@ -8,6 +8,7 @@
 #include "string.h"
 #include "sched.h"
 #include "fd.h"
+#include "namespace.h"
 
 static pcb_t proc_table[MAX_PROCS];                                                                     // fixed size array
 
@@ -75,14 +76,12 @@ void pid_free(pid_t pid) {
 pcb_t *proc_create(const char *name, uint8_t priority) {
 
     pid_t pid = pid_alloc();                                                    // alloc pid
-
     if (pid == PID_INVALID) {
         kprintf("PROC: proc_create — no free PID\n");
         return 0;
     }
 
     pcb_t *p = &proc_table[pid];                                                // return pcb slot
-
     if (p->state != PROC_UNUSED) {
         kprintf("PROC: proc_create — FATAL: slot not UNUSED\n");
         pid_free(pid);
@@ -90,7 +89,6 @@ pcb_t *proc_create(const char *name, uint8_t priority) {
     }
 
     uint8_t *kstack = (uint8_t *)kmalloc_aligned(KSTACK_SIZE);                  // allocate kernel stack
-
     if (!kstack) {
         kprintf("PROC: proc_create — OOM allocating kernel stack\n");
         pid_free(pid);
@@ -150,6 +148,11 @@ pcb_t *proc_create(const char *name, uint8_t priority) {
 
     // open stdin(0), stdout(1), stderr(2) for this process
     fd_table_init(p->fd_table);
+
+    // filesystem context: inherit from parent when forking, else default to root
+    strncpy(p->cwd_path, "/", VFS_PATH_MAX - 1);
+    p->cwd_path[VFS_PATH_MAX - 1] = '\0';
+    p->namespace = ns_create();                             // fresh namespace
 
     kprintf("PROC: created [%u] \"%s\" prio=%u quantum=%u kstack=0x%p\n", (uint32_t)pid, p->name, (uint32_t)priority, tslice, (uint32_t)kstack);
     return p;
@@ -233,6 +236,8 @@ void proc_destroy(pcb_t *p) {
     }
 
     fd_table_close_all(p->fd_table);
+    ns_unref(p->namespace);
+    p->namespace = 0;
     pid_free(p->pid);
 
     pid_t saved_pid = p->pid;
@@ -302,6 +307,11 @@ void proc_dump(const pcb_t *p) {
     if (p->state == PROC_ZOMBIE) {
         kprintf("  |  exit_code    = %u\n", (uint32_t)p->exit_code);
     }
+    kprintf("  |  cwd          = \"%s\"\n", p->cwd_path);
+    kprintf("  |  namespace    = 0x%p (%u binds, refcount=%u)\n",
+            (uint32_t)p->namespace,
+            p->namespace ? p->namespace->nbinds  : 0u,
+            p->namespace ? p->namespace->refcount : 0u);
 
     kprintf("  +---------------------------------\n");
 }

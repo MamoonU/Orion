@@ -21,8 +21,14 @@
 #define SYS_DUP2        11      // EBX = oldfd, ECX = newfd         - duplicate file descriptor
 #define SYS_EXECVE      12      // EBX = path                       - exec ELF binary in place
 #define SYS_WAIT        13      // EBX = pid (-1 = any), ECX = &exit_code
+#define SYS_CHDIR       14      // change directory
+#define SYS_GETCWD      15      // return cwd_path
+#define SYS_READDIR     16      // read directory
+#define SYS_BIND        17      // EBX = src_path, ECX = new_path, EDX = flags
+#define SYS_UNBIND      18      // EBX = new_path
+#define SYS_NSDUMP      19      // (debug) dump calling process namespace
 
-#define SYSCALL_COUNT   14
+#define SYSCALL_COUNT   20
 
 // kernel-side entry point (registered in IDT as int 0x80)
 void syscall_dispatch(regs_t *r);

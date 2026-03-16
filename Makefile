@@ -28,6 +28,7 @@ C_OBJS := \
 	kernel/fs/ramfs.o           \
 	kernel/fs/devfs.o           \
 	kernel/fs/pipe.o            \
+	kernel/fs/namespace.o		\
 	kernel/proc/proc.o          \
 	kernel/proc/sched.o         \
 	kernel/proc/fork.o          \
@@ -35,6 +36,7 @@ C_OBJS := \
 	kernel/proc/elf.o           \
 	kernel/proc/fd.o            \
 	kernel/syscall/syscall.o    \
+	kernel/shell/shell.o        \
 	kernel/drivers/serial.o     \
 	kernel/drivers/vga.o        \
 	kernel/drivers/timer.o      \

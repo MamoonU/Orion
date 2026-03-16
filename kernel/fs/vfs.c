@@ -271,3 +271,110 @@ int vfs_mkdir(const char *path) {
     vnode_t *newdir = 0;
     return dir->ops->mkdir(dir, dirname, &newdir);
 }
+
+// read a single directory entry at the given index
+int vfs_readdir(file_t *f, uint32_t index, char *name_out, uint32_t name_max, vnode_t **node_out) {
+ 
+    if (!f || !f->vnode)                               return -1;
+    if (f->vnode->type != VNODE_DIR)                   return -1;
+    if (!f->vnode->ops || !f->vnode->ops->readdir)     return -1;
+ 
+    // readdir writes into a VFS_NAME_MAX buffer; we then copy with caller's limit
+    char tmp[VFS_NAME_MAX];
+    tmp[0] = '\0';
+ 
+    vnode_t *child = 0;
+    int rc = f->vnode->ops->readdir(f->vnode, index, tmp, &child);
+    if (rc < 0) return -1;
+ 
+    if (name_out && name_max > 0) {
+        strncpy(name_out, tmp, name_max - 1);
+        name_out[name_max - 1] = '\0';
+    }
+ 
+    if (node_out) *node_out = child;
+    return 0;
+}
+
+// Normalise an absolute path string in-place.
+// Collapses redundant slashes, resolves '.' and '..' components.
+// path must be a writable buffer of at least VFS_PATH_MAX bytes.
+static void path_normalise(char *path) {
+ 
+    // component pointer array — points into a scratch copy
+    char scratch[VFS_PATH_MAX];
+    strncpy(scratch, path, VFS_PATH_MAX - 1);
+    scratch[VFS_PATH_MAX - 1] = '\0';
+ 
+    const char *parts[64];
+    int         nparts = 0;
+ 
+    char *p = scratch;
+    while (*p) {
+        while (*p == '/') p++;          // skip leading / repeated slashes
+        if (!*p) break;
+ 
+        parts[nparts++] = p;
+ 
+        while (*p && *p != '/') p++;    // walk to end of component
+        if (*p) *p++ = '\0';            // null-terminate component
+ 
+        if (nparts >= 64) break;        // safety cap
+    }
+ 
+    // resolve . and ..
+    const char *out[64];
+    int         nout = 0;
+ 
+    for (int i = 0; i < nparts; i++) {
+        if (strcmp(parts[i], ".") == 0) {
+            continue;                   // skip current-dir marker
+        } else if (strcmp(parts[i], "..") == 0) {
+            if (nout > 0) nout--;       // pop last component
+        } else {
+            out[nout++] = parts[i];
+        }
+    }
+ 
+    // rebuild absolute path
+    path[0] = '/';
+    path[1] = '\0';
+    for (int i = 0; i < nout; i++) {
+        if (i > 0) {
+            uint32_t l = (uint32_t)strlen(path);
+            if (l + 1 < VFS_PATH_MAX) { path[l] = '/'; path[l+1] = '\0'; }
+        }
+        uint32_t l = (uint32_t)strlen(path);
+        strncpy(path + l, out[i], VFS_PATH_MAX - l - 1);
+        path[VFS_PATH_MAX - 1] = '\0';
+    }
+}
+
+// Resolve a path relative to base, producing a normalised absolute path in out.
+// If path is already absolute the base is ignored.
+// out must point to a VFS_PATH_MAX byte buffer.
+void vfs_path_resolve(const char *base, const char *path, char *out) {
+ 
+    if (!path || !out) return;
+ 
+    if (path[0] == '/') {
+        // absolute input — just copy and normalise
+        strncpy(out, path, VFS_PATH_MAX - 1);
+        out[VFS_PATH_MAX - 1] = '\0';
+    } else {
+        // relative input — prepend base
+        strncpy(out, base ? base : "/", VFS_PATH_MAX - 1);
+        out[VFS_PATH_MAX - 1] = '\0';
+ 
+        uint32_t blen = (uint32_t)strlen(out);
+        if (blen > 0 && out[blen - 1] != '/' && blen + 1 < VFS_PATH_MAX) {
+            out[blen]   = '/';
+            out[blen+1] = '\0';
+            blen++;
+        }
+        strncpy(out + blen, path, VFS_PATH_MAX - blen - 1);
+        out[VFS_PATH_MAX - 1] = '\0';
+    }
+ 
+    path_normalise(out);
+}

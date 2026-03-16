@@ -22,6 +22,7 @@
 #include "keyboard.h"
 #include "sched.h"
 #include "syscall.h"
+#include "shell.h"
 
 #if defined(__linux__)
     #error "Must be compiled with a cross-compiler"
@@ -63,7 +64,7 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     syscall_init();
     idt_install_syscall();
 
-    timer_init(100);
+    timer_init(100);        // 10 ms = 100hz
     keyboard_init();
 
     pcb_t *idle = proc_create("idle", PROC_PRIO_IDLE);
@@ -71,6 +72,13 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     proc_init_frame(idle, (uint32_t)idle_process);
     proc_set_ready(idle);
     sched_add(idle);
+
+    // (PID 1) shell: runs at normal priority so the idle process
+    pcb_t *sh = proc_create("orion-sh", PROC_PRIO_NORMAL);
+    kassert(sh != 0);
+    proc_init_frame(sh, (uint32_t)shell_run);
+    proc_set_ready(sh);
+    sched_add(sh);
 
     kprintf("OrionOS: Online\n");
 
