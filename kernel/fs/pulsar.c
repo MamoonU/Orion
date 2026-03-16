@@ -448,16 +448,6 @@ int pulsar_scan(pulsar_session_t *s, uint32_t beam, char *name_out, uint32_t nam
     int len = pulse_recv(s, s_recv_buf);                                    // pulse recieve
     if (pulse_check(s_recv_buf, len, ECHO_SCAN, tag) < 0) return -1;
 
-    // parse ECHO_SCAN body:
-    // count[2]            — outer byte count of the stat record
-    // stat:
-    //   size[2]           — inner size (redundant in 9P2000 but required)
-    //   type[2] dev[4]    — kernel-use fields (not meaningful to us)
-    //   qid[13]           — SIGNAT
-    //   mode[4]           — Unix-style permission bits
-    //   atime[4] mtime[4] — timestamps
-    //   length[8]         — file size in bytes
-    //   name[string] uid[string] gid[string] muid[string]
     pos = PULSAR_HDR;
     (void)get_u16(s_recv_buf, &pos);                    // outer byte count = count[2]
     (void)get_u16(s_recv_buf, &pos);                    // inner size       = size[2]
@@ -485,6 +475,201 @@ int pulsar_scan(pulsar_session_t *s, uint32_t beam, char *name_out, uint32_t nam
     if (size_out)   *size_out   = fsize;
     return 0;
 }
+
+// VFS open: convert to PULSAR modes
+static int pulsar_vfs_open(vnode_t *v, int flags) {
+
+    pulsar_vdata_t *vd = (pulsar_vdata_t *)v->data;                     // beam data lookup
+    if (!vd) return -1;
+
+    if (vd->beam_opened) return 0;                                      // avoid reopen
+
+    uint8_t mode = PULSAR_OREAD;                                        // translate VFS flags -> PULSAR flags
+    if ((flags & O_RDWR)  == O_RDWR) mode  = PULSAR_ORDWR;
+    else if (flags & O_WRONLY)       mode  = PULSAR_OWRITE;
+    if (flags & O_TRUNC)             mode |= PULSAR_OTRUNC;
+
+    if (pulsar_open(vd->session, vd->beam, mode, 0) < 0) return -1;     // send open protocol
+
+    vd->beam_opened = 1;                                                // mark beam opened
+    return 0;
+}
+
+// VFS close: convert to PULSAR modes
+static int pulsar_vfs_close(vnode_t *v) {
+
+    pulsar_vdata_t *vd = (pulsar_vdata_t *)v->data;                     // beam data lookup
+    if (!vd) return 0;
+
+    pulsar_release(vd->session, vd->beam);                              // release the beam on the server side
+
+    if (vd->dir_names) {                                                // free directory name cache
+        for (uint32_t i = 0; i < vd->dir_count; i++) {                  // for each name
+            if (vd->dir_names[i]) kfree(vd->dir_names[i]);              // free directory name
+        }
+        kfree(vd->dir_names);
+        vd->dir_names = 0;                                              // free array
+    }
+    kfree(vd);                                                          // free vnode data
+    v->data = 0;
+    return 0;
+}
+
+// VFS read: convert to PULSAR modes
+static int pulsar_vfs_read(vnode_t *v, void *buf, uint32_t len, uint32_t offset) {
+
+    pulsar_vdata_t *vd = (pulsar_vdata_t *)v->data;                     // beam data lookup
+    if (!vd) return -1;
+
+    if (!vd->beam_opened) {                                             // auto-open if needed
+        if (pulsar_open(vd->session, vd->beam, PULSAR_OREAD, 0) < 0)
+            return -1;
+        vd->beam_opened = 1;
+    }
+    return pulsar_read(vd->session, vd->beam, offset, buf, len);        // return # of bytes read
+}
+
+// VFS write: convert to PULSAR modes
+static int pulsar_vfs_write(vnode_t *v, const void *buf, uint32_t len, uint32_t offset) {
+
+    pulsar_vdata_t *vd = (pulsar_vdata_t *)v->data;                     // beam data lookup
+    if (!vd) return -1;
+
+    if (!vd->beam_opened) {                                             // auto-open if needed
+        if (pulsar_open(vd->session, vd->beam, PULSAR_OWRITE, 0) < 0)
+            return -1;
+        vd->beam_opened = 1;
+    }
+    return pulsar_write(vd->session, vd->beam, offset, buf, len);       // return # of bytes written
+}
+ 
+// VFS lookup: convert to PULSAR modes
+static int pulsar_vfs_lookup(vnode_t *dir, const char *name, vnode_t **out) {
+
+    pulsar_vdata_t *vd = (pulsar_vdata_t *)dir->data;                                   // beam data lookup
+    if (!vd || !name || !out) return -1;
+
+    uint32_t new_beam = pulsar_beam_alloc(vd->session);                                 // allocate new beam
+    if (new_beam == PULSAR_NOBEAM) return -1;
+
+    const char     *components[1] = { name };
+    pulsar_signat_t sig;
+
+    if (pulsar_traverse(vd->session, vd->beam, new_beam, components, 1, &sig) < 0) {    // traverse 
+        pulsar_beam_free(vd->session, new_beam);                                        // return QID of new beam
+        return -1;
+    }
+    uint8_t vtype = (sig.type & SIGNAT_DIR) ? VNODE_DIR : VNODE_FILE;                   // determine vnode type
+    *out = pulsar_vnode_create(vd->session, new_beam, vtype);                           // create vnode
+    return *out ? 0 : -1;
+}
+
+// VFS read directories: convert to PULSAR modes
+static int pulsar_vfs_readdir(vnode_t *dir, uint32_t index, char *name_out, vnode_t **node_out) {
+
+    pulsar_vdata_t *vd = (pulsar_vdata_t *)dir->data;                                   // beam data lookup
+    if (!vd) return -1;
+
+    if (!vd->dir_loaded) {                                                              // lazy directory loading
+
+        if (!vd->beam_opened) {                                                         // auto-open if needed
+            if (pulsar_open(vd->session, vd->beam, PULSAR_OREAD, 0) < 0)
+                return -1;
+            vd->beam_opened = 1;
+        }
+
+        // read packed 9P stat records until no more data arrives
+        #define DIR_CACHE_MAX 64                                                        // temp cache = temp store names
+        char     tmp[DIR_CACHE_MAX][VFS_NAME_MAX];
+        uint32_t tmp_count = 0;
+        uint32_t read_off  = 0;                                                         // directory read offset
+        uint8_t  rbuf[PULSAR_MSIZE];                                                    // returned data
+
+        while (tmp_count < DIR_CACHE_MAX) {
+            int n = pulsar_read(vd->session, vd->beam, read_off, rbuf, sizeof(rbuf));
+            if (n <= 0) break;
+            read_off += (uint32_t)n;
+
+            uint32_t p = 0;
+            while (p + 2 <= (uint32_t)n && tmp_count < DIR_CACHE_MAX) {                 // parsing buffer
+
+                uint16_t stat_size = (uint16_t)rbuf[p] | ((uint16_t)rbuf[p+1] << 8);    // stat record body size
+
+                if (stat_size < 47) break;                                              // minimum valid stat structure = 47 bytes
+                if (p + 2 + stat_size > (uint32_t)n) break;                             // ensure record fits inside buffer
+
+                // offset -> name string = inner_size[2] type[2] dev[4] qid[13] mode[4] atime[4] mtime[4] length[8] = 41 bytes, then name count[2]
+                uint32_t name_off = p + 2 + 2 + 2 + 4 + 13 + 4 + 4 + 4 + 8;             // name offset
+                if (name_off + 2 > (uint32_t)n) { p += 2 + stat_size; continue; }
+
+                uint16_t nlen = (uint16_t)rbuf[name_off] | ((uint16_t)rbuf[name_off + 1] << 8);     // read name length
+                uint32_t src  = name_off + 2;                                                       // read name bytes
+
+                if (src + nlen > (uint32_t)n) { p += 2 + stat_size; continue; }                     // bounds check
+
+                uint32_t copy = nlen < VFS_NAME_MAX - 1 ? nlen : VFS_NAME_MAX - 1;                  // copy name -> temp cache
+                for (uint32_t i = 0; i < copy; i++) tmp[tmp_count][i] = (char)rbuf[src + i];
+                tmp[tmp_count][copy] = '\0';
+                tmp_count++;
+
+                p += 2 + stat_size;                                                                 // advance to next record
+            }
+        }
+
+        if (tmp_count > 0) {
+            vd->dir_names = kmalloc(tmp_count * sizeof(char *));                        // allocate space for name pointers
+            if (vd->dir_names) {
+                for (uint32_t i = 0; i < tmp_count; i++) {                              // copy each string into heap memory
+                    uint32_t slen = (uint32_t)strlen(tmp[i]) + 1;
+                    vd->dir_names[i] = kmalloc(slen);
+                    if (vd->dir_names[i]) strncpy(vd->dir_names[i], tmp[i], slen);
+                }
+                vd->dir_count = tmp_count;                                              // count # of entries
+            }
+        }
+        vd->dir_loaded = 1;                                                             // directory contents cached
+        #undef DIR_CACHE_MAX                                                            // undef temp cache
+    }
+
+    if (index >= vd->dir_count) return -1;                                              // return directory entries
+    if (!vd->dir_names || !vd->dir_names[index]) return -1;
+
+    if (name_out) {
+        strncpy(name_out, vd->dir_names[index], VFS_NAME_MAX - 1);
+        name_out[VFS_NAME_MAX - 1] = '\0';
+    }
+
+    if (node_out) {
+        vnode_t *child = 0;
+        pulsar_vfs_lookup(dir, vd->dir_names[index], &child);                           // return child vnode
+        *node_out = child;
+    }
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // allocate a VFS vnode backed by (session, beam): vnode_type = file/dir
 vnode_t *pulsar_vnode_create(pulsar_session_t *s, uint32_t beam, uint8_t vnode_type) {
