@@ -320,40 +320,170 @@ void pulsar_session_destroy(pulsar_session_t *s) {
 // EMIT_TRAVERSE: clone src_beam into new_beam, walking path components
 int pulsar_traverse(pulsar_session_t *s, uint32_t src_beam, uint32_t new_beam, const char **components, uint32_t ncomp, pulsar_signat_t *signat_out) {
 
+    uint16_t tag = alloc_tag(s);
+    uint32_t pos = 0;
+    pulse_begin(s_send_buf, EMIT_TRAVERSE, tag, &pos);                          // build request
+    put_u32(s_send_buf, &pos, src_beam);                                        // src_beam = starting directory
+    put_u32(s_send_buf, &pos, new_beam);                                        // new_beam = destination handle
+    put_u16(s_send_buf, &pos, (uint16_t)ncomp);                                 // components
 
+    for (uint32_t i = 0; i < ncomp; i++)
+        put_str(s_send_buf, &pos, components[i]);                               // wire as strings
 
+    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
 
+    int len = pulse_recv(s, s_recv_buf);                                        // pulse recieve
+    if (pulse_check(s_recv_buf, len, ECHO_TRAVERSE, tag) < 0) return -1;        // return QID for each component walked
+
+    // parse ECHO_TRAVERSE
+    pos = PULSAR_HDR;
+    uint16_t nwqid = get_u16(s_recv_buf, &pos);                                 // partial walk detection
+
+    if (ncomp > 0 && nwqid != ncomp) {
+        kprintf("PULSAR: traverse — partial walk: %u of %u components\n", (uint32_t)nwqid, ncomp);
+        return -1;
+    }
+
+    // walk all qids
+    pulsar_signat_t last;
+    last.type = 0; last.vers = 0; last.path = 0;
+    for (uint16_t i = 0; i < nwqid; i++)                                        // for each QID
+        get_signat(s_recv_buf, &pos, &last);                                    // return last QID
+
+    if (signat_out) *signat_out = last;
+    return 0;
 }
 
 // EMIT_OPEN: open beam for I/O. mode = PULSAR_O*
 int pulsar_open(pulsar_session_t *s, uint32_t beam, uint8_t mode, pulsar_signat_t *signat_out) {
 
+    uint16_t tag = alloc_tag(s);
+    uint32_t pos = 0;
 
+    pulse_begin(s_send_buf, EMIT_OPEN, tag, &pos);                              // build request
+    put_u32(s_send_buf, &pos, beam);                                            // return beam
+    put_u8 (s_send_buf, &pos, mode);                                            // return mode (0=read | 1=write | 2=read/write | 3=execute)
 
+    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
 
+    int len = pulse_recv(s, s_recv_buf);                                        // pulse recieve
+    if (pulse_check(s_recv_buf, len, ECHO_OPEN, tag) < 0) return -1;
+
+    // parse ECHO_OPEN
+    pos = PULSAR_HDR;
+    pulsar_signat_t sig;
+    get_signat(s_recv_buf, &pos, &sig);                                         // return QID
+    (void)get_u32(s_recv_buf, &pos);                                            // return iounit (max transfer size read/write)
+
+    if (signat_out) *signat_out = sig;
+    return 0;
 }
 
 // EMIT_READ: read count bytes at offset. returns bytes read or -1
-int pulsar_read(pulsar_session_t *s, uint32_t beam, uint32_t offset, void *buf, uint32_t count) {
+int pulsar_read(pulsar_session_t *s, uint32_t beam, uint32_t offset, void *out, uint32_t count) {
 
+    uint32_t max_data = s->msize - (PULSAR_HDR + 4);                            // cap to what fits in a response message
+    if (count > max_data) count = max_data;
 
+    uint16_t tag = alloc_tag(s);
+    uint32_t pos = 0;
+    pulse_begin(s_send_buf, EMIT_READ, tag, &pos);                              // build request
+    put_u32(s_send_buf, &pos, beam);                                            // beam
+    put_u64(s_send_buf, &pos, (uint64_t)offset);                                // offset
+    put_u32(s_send_buf, &pos, count);                                           // count bytes
 
+    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
 
+    int len = pulse_recv(s, s_recv_buf);                                        // pulse recieve
+    if (pulse_check(s_recv_buf, len, ECHO_READ, tag) < 0) return -1;
+
+    // parse ECHO_READ
+    pos = PULSAR_HDR;
+    uint32_t rcount = get_u32(s_recv_buf, &pos);
+    if (rcount > count) rcount = count;
+
+    for (uint32_t i = 0; i < rcount; i++)                                       // copy data into output buffer
+        ((uint8_t *)out)[i] = s_recv_buf[pos + i];
+
+    return (int)rcount;
 }
 
 // EMIT_WRITE: write count bytes at offset. Returns bytes written or -1
 int pulsar_write(pulsar_session_t *s, uint32_t beam, uint32_t offset, const void *data, uint32_t count) {
 
+    // EMIT_WRITE overhead
+    uint32_t max_data = s->msize - (PULSAR_HDR + 16);                       // max write = msize - (header + (beam + offset + count))
+    if (count > max_data) count = max_data;
 
+    uint16_t tag = alloc_tag(s);
+    uint32_t pos = 0;
+    pulse_begin(s_send_buf, EMIT_WRITE, tag, &pos);                         // build request
+    put_u32(s_send_buf, &pos, beam);                                        // beam
+    put_u64(s_send_buf, &pos, (uint64_t)offset);                            // offset
+    put_u32(s_send_buf, &pos, count);                                       // count bytes
 
+    for (uint32_t i = 0; i < count; i++)                                    // data copy
+        s_send_buf[pos++] = ((const uint8_t *)data)[i];
+
+    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
+
+    int len = pulse_recv(s, s_recv_buf);                                    // pulse recieve
+    if (pulse_check(s_recv_buf, len, ECHO_WRITE, tag) < 0) return -1;
+
+    // parse ECHO_WRITE
+    pos = PULSAR_HDR;
+    return (int)get_u32(s_recv_buf, &pos);
 }
 
-// EMIT_SCAN: stat a beam - fills name, signat and size (any may = NULL)
+// EMIT_SCAN: scan a beam - fill name, signat and size (any may = NULL)
 int pulsar_scan(pulsar_session_t *s, uint32_t beam, char *name_out, uint32_t name_max, pulsar_signat_t *signat_out, uint64_t *size_out) {
 
+    uint16_t tag = alloc_tag(s);
+    uint32_t pos = 0;
+    pulse_begin(s_send_buf, EMIT_SCAN, tag, &pos);                          // begin request
+    put_u32(s_send_buf, &pos, beam);                                        // beam
 
+    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
 
+    int len = pulse_recv(s, s_recv_buf);                                    // pulse recieve
+    if (pulse_check(s_recv_buf, len, ECHO_SCAN, tag) < 0) return -1;
 
+    // parse ECHO_SCAN body:
+    // count[2]            — outer byte count of the stat record
+    // stat:
+    //   size[2]           — inner size (redundant in 9P2000 but required)
+    //   type[2] dev[4]    — kernel-use fields (not meaningful to us)
+    //   qid[13]           — SIGNAT
+    //   mode[4]           — Unix-style permission bits
+    //   atime[4] mtime[4] — timestamps
+    //   length[8]         — file size in bytes
+    //   name[string] uid[string] gid[string] muid[string]
+    pos = PULSAR_HDR;
+    (void)get_u16(s_recv_buf, &pos);                    // outer byte count = count[2]
+    (void)get_u16(s_recv_buf, &pos);                    // inner size       = size[2]
+    (void)get_u16(s_recv_buf, &pos);                    // type             = type[2]
+    (void)get_u32(s_recv_buf, &pos);                    // dev              = dev[4]
+
+    pulsar_signat_t sig;
+    get_signat(s_recv_buf, &pos, &sig);                 // QID              = qid[13]
+
+    (void)get_u32(s_recv_buf, &pos);                    // mode             = mode[4]
+    (void)get_u32(s_recv_buf, &pos);                    // atime            = atime[4]
+    (void)get_u32(s_recv_buf, &pos);                    // mtime            = mtime[4]
+
+    uint64_t fsize = get_u64(s_recv_buf, &pos);         // fsize    = length[8]
+
+    char name_tmp[VFS_NAME_MAX];                        // name
+    get_str(s_recv_buf, &pos, name_tmp, VFS_NAME_MAX);
+
+    if (name_out && name_max > 0) {
+        strncpy(name_out, name_tmp, name_max - 1);
+        name_out[name_max - 1] = '\0';
+    }
+
+    if (signat_out) *signat_out = sig;
+    if (size_out)   *size_out   = fsize;
+    return 0;
 }
 
 // allocate a VFS vnode backed by (session, beam): vnode_type = file/dir
