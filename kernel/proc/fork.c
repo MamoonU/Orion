@@ -33,16 +33,17 @@ pid_t proc_fork(uint32_t child_entry) {
         // inherit filesystem context
         strncpy(child->cwd_path, parent->cwd_path, VFS_PATH_MAX - 1);
         child->cwd_path[VFS_PATH_MAX - 1] = '\0';
-        child->namespace = parent->namespace;
+
+        ns_unref(child->namespace);             // drop fresh empty ns from proc_create
+        child->namespace = parent->namespace;   // share parent's namespace
+        ns_ref(child->namespace);               // copy-on-bind isolates on first mutation
     }
 
     proc_init_frame(child, child_entry);                                            // build child stack frame
     proc_set_ready(child);                                                          // child = runnable
     sched_add(child);                                                               // add child -> scheduler queue
 
-    kprintf("PROC: proc_fork — child [%u] queued, returning to parent [%u]\n",
-            (uint32_t)child->pid,
-            parent ? (uint32_t)parent->pid : 0u);
+    kprintf("PROC: proc_fork — child [%u] queued, returning to parent [%u]\n", (uint32_t)child->pid, parent ? (uint32_t)parent->pid : 0u);
 
     return child->pid;                                                              // return to parent
 }
