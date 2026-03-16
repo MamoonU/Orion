@@ -17,10 +17,10 @@ ASM_OBJS := \
 	kernel/arch/x86/syscall.o
 
 C_OBJS := \
-	kernel/arch/x86/gdt.o		\
-	kernel/arch/x86/idt.o		\
-	kernel/arch/x86/tss.o		\
-	kernel/arch/x86/irq_c.o		\
+	kernel/arch/x86/gdt.o      \
+	kernel/arch/x86/idt.o      \
+	kernel/arch/x86/tss.o      \
+	kernel/arch/x86/irq_c.o    \
 	kernel/mm/pmm.o             \
 	kernel/mm/vmm.o             \
 	kernel/mm/kheap.o           \
@@ -28,7 +28,7 @@ C_OBJS := \
 	kernel/fs/ramfs.o           \
 	kernel/fs/devfs.o           \
 	kernel/fs/pipe.o            \
-	kernel/fs/namespace.o		\
+	kernel/fs/namespace.o       \
 	kernel/fs/pulsar.o          \
 	kernel/proc/proc.o          \
 	kernel/proc/sched.o         \
@@ -51,13 +51,16 @@ OBJS := $(ASM_OBJS) $(C_OBJS)
 
 ISODIR := isodir/boot
 
-all: clean myos.iso
+.PHONY: all clean run
+
+all: myos.iso
 
 clean:
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
 	@echo "┃                            MAKE CLEAN                             ┃"
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
 	@rm -f $(OBJS) myos myos.iso
+	@rm -f $(shell find lib/ -name "*.lo" -o -name "*.a" 2>/dev/null)
 	@rm -rf isodir
 
 kernel/arch/x86/boot.o:    kernel/arch/x86/boot.asm
