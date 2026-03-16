@@ -74,10 +74,97 @@ static void get_signat(const uint8_t *b, uint32_t *p, pulsar_signat_t *q) {     
     q->path = get_u64(b, p);
 }
 
+// shared static buffers
+static uint8_t s_send_buf[PULSAR_MSIZE];    // send
+static uint8_t s_recv_buf[PULSAR_MSIZE];    // recieve
 
+// write 7-byte header into buf -> advance *pos to the body start
+static void pulse_begin(uint8_t *buf, uint8_t type, uint16_t tag, uint32_t *pos) {
+    *pos = 0;
+    put_u32(buf, pos, 0);       // size placeholder: filled in by pulse_send
+    put_u8 (buf, pos, type);    // write type
+    put_u16(buf, pos, tag);     // write msg tag
+}
 
+// finalise size field & write bytes to server
+static int pulse_send(pulsar_session_t *s, uint8_t *buf, uint32_t total) {
 
+    // patch in real size (includes 4-byte size field itself)
+    buf[0] = (uint8_t)(total);
+    buf[1] = (uint8_t)(total >> 8);
+    buf[2] = (uint8_t)(total >> 16);
+    buf[3] = (uint8_t)(total >> 24);
 
+    uint32_t sent = 0;
+    while (sent < total) {                                              // loop until everything written
+        int n = vfs_write(s->srv_file, buf + sent, total - sent);       // write call
+        if (n <= 0) {
+            kprintf("PULSAR: pulse_send - write failed\n");
+            return -1;
+        }
+        sent += (uint32_t)n;
+    }
+    return 0;
+}
+
+// read framed pulse into buf
+static int pulse_recv(pulsar_session_t *s, uint8_t *buf) {
+
+    uint32_t got = 0;
+    while (got < 4) {                                           // read 4-byte size field first
+        int n = vfs_read(s->srv_file, buf + got, 4 - got);
+        if (n <= 0) return -1;
+        got += (uint32_t)n;
+    }
+
+    // decode size
+    uint32_t size = (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) | ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
+ 
+    if (size < PULSAR_HDR || size > PULSAR_MSIZE) {             // validate size
+        kprintf("PULSAR: pulse_recv - bad size %u\n", size);
+        return -1;
+    }
+
+    // read rest of msg
+    uint32_t rest = size - 4;
+    got = 0;
+    while (got < rest) {
+        int n = vfs_read(s->srv_file, buf + 4 + got, rest - got);
+        if (n <= 0) return -1;
+        got += (uint32_t)n;
+    }
+    return (int)size;
+}
+ 
+// validate a server response
+static int pulse_check(const uint8_t *buf, int len, uint8_t expected_type, uint16_t tag) {
+
+    if (len < PULSAR_HDR) return -1;                                            // length check
+
+    // decode response header
+    uint32_t pos   = 4;
+    uint8_t  rtype = get_u8 (buf, &pos);
+    uint16_t rtag  = get_u16(buf, &pos);
+
+    if (rtype == ECHO_ANOMALY) {                                                // ANOMALY handling
+        char ename[PULSAR_ENAME_MAX];
+        get_str(buf, &pos, ename, PULSAR_ENAME_MAX);
+        kprintf("PULSAR: server error: %s\n", ename);
+        return -1;
+    }
+
+    if (rtype != expected_type) {                                               // response type validation
+        kprintf("PULSAR: pulse_check - expected type %u got %u\n", (uint32_t)expected_type, (uint32_t)rtype);
+        return -1;
+    }
+
+    if (rtag != tag && tag != PULSAR_NOTAG) {                                   // tag validation
+        kprintf("PULSAR: pulse_check - tag mismatch (want %u got %u)\n", (uint32_t)tag, (uint32_t)rtag);
+        return -1;
+    }
+
+    return 0;
+}
 
 
 
