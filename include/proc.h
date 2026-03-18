@@ -106,8 +106,8 @@ typedef struct pcb {
     file_t          *fd_table[FD_MAX];
 
     // filesystem context (future: per-process 9P namespace binding point)
-    char            cwd_path[VFS_PATH_MAX]; // current working directory (absolute path)
-    ns_t        *namespace;              // namespace root vnode (NULL = global VFS root)
+    char            cwd_path[VFS_PATH_MAX];     // current working directory (absolute path)
+    ns_t            *namespace;                 // namespace root vnode (NULL = global VFS root)
 
 } pcb_t;
 
@@ -122,6 +122,9 @@ void   proc_set_ready(pcb_t *p);
 void   proc_destroy(pcb_t *p);
 
 void   proc_init_frame(pcb_t *p, uint32_t entry_point);         // fake irq-stub register frame for scheduler
+
+void   proc_init_user_frame(pcb_t *p, uint32_t entry_point, uint32_t user_esp);     // build ring-3 iret frame on the kernel stack
+int    proc_setup_user_stack(pcb_t *p);                                             // allocate and map USTACK_SIZE bytes below USTACK_TOP in the process's page
 
 pcb_t *proc_get(pid_t pid);                                     // lookup pid
 const char *proc_state_name(proc_state_t s);
