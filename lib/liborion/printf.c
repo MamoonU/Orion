@@ -38,7 +38,7 @@ static int uint_to_buf(char *out, uint32_t val, uint32_t base, int width, char p
 }
 
 // core formatter: write into fixed buffer
-static int vformat(char *buf, uint32_t bufsz, const char *fmt, va_list args) {
+int vformat(char *buf, uint32_t bufsz, const char *fmt, va_list args) {
 
     uint32_t pos = 0;
 
@@ -153,5 +153,39 @@ int sprintf(char *buf, const char *fmt, ...) {
     va_start(args, fmt);
     int n = vformat(buf, 0x7FFFFFFF, fmt, args);
     va_end(args);
+    return n;
+}
+
+// output safely formatted va_list args
+int vsnprintf(char *buf, uint32_t size, const char *fmt, va_list args) {
+    return vformat(buf, size, fmt, args);
+}
+
+// output va_list args 
+int vprintf (const char *fmt, va_list args) {
+    char buf[512];
+    int n = vformat(buf, sizeof(buf), fmt, args);
+    if (n > 0) write(STDOUT_FILENO, buf, (uint32_t)n);
+    return n;
+}
+
+// safely formatted output -> buffer
+int snprintf(char *buf, uint32_t size, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int n = vformat(buf, size, fmt, args);
+    va_end(args);
+    return n;
+}
+
+
+// write formatted output to arbitrary fd (no FILE*)
+int fprintf(int fd, const char *fmt, ...) {
+    char buf[512];
+    va_list args;
+    va_start(args, fmt);
+    int n = vformat(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    if (n > 0) write(fd, buf, (uint32_t)n);
     return n;
 }
