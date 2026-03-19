@@ -252,11 +252,11 @@ void vmm_destroy_address_space(uint32_t pd_phys) {
         for (int j = 0; j < 1024; j++) {
             if (pt[j] & VMM_PRESENT) {
                 pmm_free_frame(pt[j] & VMM_ADDR_MASK);
+                pg_count++;
             }
-            pmm_free_frame(pt_phys);    // free the page table frame
-            pt_count++;
         }
         pmm_free_frame(pt_phys);    // free table
+        pt_count++;
         kprintf("VMM: address space 0x%p destroyed (%u PTs, %u pages freed)\n", pd_phys, pt_count, pg_count);
     }
 }

@@ -52,7 +52,7 @@ static int elf_load_segment(file_t *f, const Elf32_Phdr *ph, uint32_t pd_phys) {
             return -1;
         }
 
-        memset((void *)page, 0, PAGE_SIZE);                                             // zero mapped page: BSS and alignment padding are clean
+        memset((void *)frame, 0, PAGE_SIZE);                                             // zero mapped page: BSS and alignment padding are clean
         vmm_map_page_in(pd_phys, page, frame, page_flags);                              // map virtual -> physical
     }
 
