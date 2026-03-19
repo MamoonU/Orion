@@ -169,35 +169,67 @@ static int32_t sys_execve(regs_t *r) {
 
     if (!syscall_validate_ptr(path, 1)) return -1;
 
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+ 
+    kprintf("EXECVE: [%u] \"%s\" loading \"%s\"\n", (uint32_t)p->pid, p->name, path);
+ 
+    // 1. replace address space
+    if (p->page_directory) {
+        vmm_destroy_address_space((uint32_t)p->page_directory);
+        p->page_directory = 0;
+    }
+    uint32_t new_pd = vmm_create_address_space();
+    if (!new_pd) { kprintf("EXECVE: OOM creating address space\n"); return -1; }
+    p->page_directory = (uint32_t *)new_pd;
+ 
+    // 2. load ELF into new PD (elf_load uses sched_current()->page_directory)
     uint32_t entry = elf_load(path);
     if (!entry) {
         kprintf("EXECVE: failed to load \"%s\"\n", path);
+        vmm_destroy_address_space(new_pd);
+        p->page_directory = 0;
         return -1;
     }
 
-    pcb_t *p = sched_current();
-    if (!p) return -1;
+    // 3. map user stack
+    if (proc_setup_user_stack(p) != 0) {
+        kprintf("EXECVE: failed to set up user stack\n");
+        vmm_destroy_address_space(new_pd);
+        p->page_directory = 0;
+        return -1;
+    }
 
-    kprintf("EXECVE: [%u] \"%s\" -> ELF entry 0x%p\n",
-            (uint32_t)p->pid, path, entry);
+    // 4. patch saved iret frame for ring-3 return
+    r->eip      = entry;
+    r->cs       = 0x1Bu;          // GDT[3] user code  RPL=3
+    r->eflags   = 0x00000202u;    // IF=1, reserved
+    r->useresp  = USTACK_TOP;     // ring-3 stack pointer
+    r->ss       = 0x23u;          // GDT[4] user data  RPL=3
 
-    // Redirect the iret target to the new binary's entry point.
-    // Clear all general-purpose registers so the new image starts clean.
-    r->eip       = entry;
+    r->ds = 0x23u;
+    r->es = 0x23u;
+    r->fs = 0x23u;
+    r->gs = 0x23u;
+
     r->eax       = 0;
     r->ebx       = 0;
     r->ecx       = 0;
     r->edx       = 0;
+
     r->esi       = 0;
     r->edi       = 0;
     r->ebp       = 0;
-    r->eflags    = 0x00000202u;
+
+    // 5. activate new PD
+    vmm_switch(new_pd);
 
     // Reset scheduler accounting so the new image gets a full timeslice
     p->timeslice       = p->timeslice_len;
     p->ticks_total     = 0;
     p->ticks_scheduled = 0;
 
+    kprintf("EXECVE: [%u] \"%s\" -> ring-3 entry=0x%p  stack=0x%p\n", (uint32_t)p->pid, path, entry, USTACK_TOP);
     return 0;
 }
 

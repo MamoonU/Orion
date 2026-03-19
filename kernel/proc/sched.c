@@ -6,6 +6,7 @@
 #include "kprintf.h"
 #include "timer.h"
 #include "syscall.h"
+#include "vmm.h"
 
 #define SCHED_MAX_PROCS MAX_PROCS
 
@@ -140,11 +141,12 @@ uint32_t sched_switch_esp(uint32_t current_esp) {
     // 4. update TSS.esp0
     tss_set_esp0(current_proc->esp0);
 
-    // 5. return new esp: irq.asm will load before iret
+    // 5. switch address space: load next process PD into CR3
+    uint32_t new_pd = current_proc->page_directory ? (uint32_t)current_proc->page_directory : vmm_get_kernel_pd();
+    vmm_switch(new_pd);
+
     return current_proc->esp_kernel;
 }
-
-extern void sched_start_first(uint32_t new_esp);
 
 // launch scheduler
 void sched_start(void) {
@@ -182,6 +184,10 @@ void sched_start(void) {
     sched_enabled = 1;                                                  // enable scheduler
 
     tss_set_esp0(current_proc->esp0);                                   // update TSS
+
+    // load first process's PD before jumping into it
+    uint32_t first_pd = current_proc->page_directory ? (uint32_t)current_proc->page_directory : vmm_get_kernel_pd();
+    vmm_switch(first_pd);
 
     kprintf("SCHED: Starting - first process [%u] \"%s\"\n", (uint32_t)current_proc->pid, current_proc->name);
 
