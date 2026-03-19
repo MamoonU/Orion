@@ -8,6 +8,7 @@
 
 extern void enable_paging(uint32_t pd_phys);                            // from paging.asm
 extern void tlb_flush_page(uint32_t virt);                              // from paging.asm
+extern void vmm_load_cr3(uint32_t pd_phys);
 
 
 static uint32_t *page_directory = 0;    // physical address of page directory (= virtual address)
@@ -17,6 +18,40 @@ static uint32_t  kernel_pd_phys = 0;    // new PDs can copy kernel mappings
 #define PD_INDEX(virt) ((virt) >> 22)                                               // extract top 10 bits
 #define PT_INDEX(virt) (((virt) >> 12) & 0x3FFu)                                    // extract next 10 bits
 
+#define VMM_PD_REGISTRY_MAX  256                            // 256 max process PD registers
+static uint32_t pd_registry[VMM_PD_REGISTRY_MAX];           // live process PD registered here
+static uint32_t pd_registry_count = 0;
+
+// add process -> pd_registry
+static void pd_registry_add(uint32_t pd_phys) {
+    if (pd_registry_count >= VMM_PD_REGISTRY_MAX) {
+        kprintf("VMM: pd_registry_add - registry full!\n");
+        return;
+    }
+    pd_registry[pd_registry_count++] = pd_phys;
+}
+
+// remove process -> pd_registry
+static void pd_registry_remove(uint32_t pd_phys) {
+    for (uint32_t i = 0; i < pd_registry_count; i++) {
+        if (pd_registry[i] == pd_phys) {
+            pd_registry[i] = pd_registry[--pd_registry_count];
+            pd_registry[pd_registry_count] = 0;
+            return;
+        }
+    }
+}
+
+// push one kernel PDE -> every registered process PD
+static void propagate_kernel_pde(uint32_t pd_idx) {
+    for (uint32_t k = 0; k < pd_registry_count; k++) {
+        if (!pd_registry[k]) continue;
+        uint32_t *rpd = (uint32_t *)pd_registry[k];
+        rpd[pd_idx] = page_directory[pd_idx];           // called from create_table() when new kernel PDE allocated
+    }
+}
+
+// allocate PT -> install into kernel PD
 static uint32_t *create_table(uint32_t virt, uint32_t flags) {
 
     uint32_t pd_idx = PD_INDEX(virt);                                           // locate PDE
@@ -32,11 +67,17 @@ static uint32_t *create_table(uint32_t virt, uint32_t flags) {
     }
 
     uint32_t *pt = (uint32_t *)pt_phys;                                         // clear every entry (all PTEs = !present)
-    for (int i = 0; i < 1024; i++)
+    for (int i = 0; i < 1024; i++) {
         pt[i] = 0;
+    }
 
     // PDE = always mark writable (per-page permissions enforced at PTE level)
     page_directory[pd_idx] = pt_phys | VMM_PRESENT | VMM_WRITABLE | (flags & VMM_USER);     // install into directory
+
+
+    if (pd_idx < VMM_KERNEL_PDE_END) {                                          // if kernel PDE: push it to all registered process PDs
+        propagate_kernel_pde(pd_idx);
+    }
 
     return pt;
 
@@ -153,26 +194,38 @@ uint32_t vmm_get_kernel_pd(void) {
     return kernel_pd_phys;
 }
 
+// read physical address of currently-active PD from CR3
+uint32_t vmm_get_current_pd(void) {
+    uint32_t cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    return cr3;
+}
+
 // create new PD
 uint32_t vmm_create_address_space(void) {
 
     uint32_t pd_phys = pmm_alloc_frame();
+
     if (!pd_phys) {                                                         // OOM check
         kprintf("VMM: vmm_create_address_space — OOM\n");
         return 0;
     }
 
-    uint32_t *pd = (uint32_t *)pd_phys;                                     // allocate fresh 4KB page directory
+    uint32_t *pd = (uint32_t *)pd_phys;                                     // allocate fresh 4KB PD
+    uint32_t *kpd = (uint32_t *)kernel_pd_phys;                             // kernel 4KB PD
 
-    for (int i = 0; i < 1024; i++)                                          // zero all 1024 entries
+    for (int i = 0; i < 1024; i++) {                                        // PT frame is shared, !copied, so kernel mappings are always synced across all address spaces
         pd[i] = 0;
+    }
 
-    // copy kernel PDEs (first 4MB = PDE[0]) from the master kernel PD
-    uint32_t *kpd = (uint32_t *)kernel_pd_phys;                             // PT frame is shared, !copied, so kernel mappings are always synced across all address spaces
-    for (int i = 0; i < 1; i++)                                             // only PDE[0] = 0x00000000–0x003FFFFF
+    // copy kernel PDEs (PDE[0] -> VMM_KERNEL_PDE_END)
+    for (uint32_t i = 0; i < VMM_KERNEL_PDE_END; i++) {
         pd[i] = kpd[i];
+    }
 
-    kprintf("VMM: new address space @ phys 0x%p\n", pd_phys);
+    pd_registry_add(pd_phys);                                               //register for future propagation
+
+    kprintf("VMM: new address space @ phys 0x%p (kernel PDEs 0..%u shared)\n", pd_phys);
     return pd_phys;                                                         // new PD = return physical address 
 }
 
@@ -181,10 +234,15 @@ void vmm_destroy_address_space(uint32_t pd_phys) {
 
     if (!pd_phys || pd_phys == kernel_pd_phys) return;                      // dont touch kernel space
 
-    uint32_t *pd = (uint32_t *)pd_phys;
+    pd_registry_remove(pd_phys);                                            // unregister before any frees
 
-    // free user-space page tables (skip PDE[0] = kernel)
-    for (int i = 1; i < 1024; i++) {
+    uint32_t *pd = (uint32_t *)pd_phys;
+    uint32_t pt_count = 0;
+    uint32_t pg_count = 0;
+
+    // free user-space page tables (start -> VMM_KERNEL_PDE_END)
+    for (uint32_t i = VMM_KERNEL_PDE_END; i < 1024; i++) {
+
         if (!(pd[i] & VMM_PRESENT)) continue;
 
         uint32_t  pt_phys = pd[i] & VMM_ADDR_MASK;
@@ -194,19 +252,68 @@ void vmm_destroy_address_space(uint32_t pd_phys) {
         for (int j = 0; j < 1024; j++) {
             if (pt[j] & VMM_PRESENT) {
                 pmm_free_frame(pt[j] & VMM_ADDR_MASK);
+                pg_count++;
             }
+            pmm_free_frame(pt_phys);    // free the page table frame
+            pt_count++;
         }
-
         pmm_free_frame(pt_phys);    // free table
-        kprintf("VMM: address space 0x%p destroyed\n", pd_phys);
+        kprintf("VMM: address space 0x%p destroyed (%u PTs, %u pages freed)\n", pd_phys, pt_count, pg_count);
     }
-
 }
 
 // context switch: called by scheduler on every context switch
 void vmm_switch(uint32_t pd_phys) {
     if (pd_phys)
         vmm_load_cr3(pd_phys);                                              // load pd_phys into CR3 = flush entire TLB
+}
+
+// copy kernel PDEs (full kernel range) from  master kernel PD -> process PD
+void vmm_sync_kernel_pdes(uint32_t pd_phys) {
+
+    if (!pd_phys || pd_phys == kernel_pd_phys) return;
+
+    uint32_t *pd  = (uint32_t *)pd_phys;
+    uint32_t *kpd = (uint32_t *)kernel_pd_phys;
+
+    for (uint32_t i = 0; i < VMM_KERNEL_PDE_END; i++) {     // VMM_KERNEL_PDE_END covers identity-mapped kernel + VGA
+        pd[i] = kpd[i];                                     // extend loop if kernel grows beyond first 4 MB
+    }
+}
+
+// map single 4KB page -> *explicit* PD (pd_phys) rather than into currently-active one
+void vmm_map_page_in(uint32_t pd_phys, uint32_t virt, uint32_t phys, uint32_t flags) {
+
+    if (!pd_phys) {                                     // NULL = use current (kernel) PD
+        vmm_map_page(virt, phys, flags);
+        return;
+    }
+
+    uint32_t *pd     = (uint32_t *)pd_phys;
+    uint32_t  pd_idx = PD_INDEX(virt);                  // where to map
+    uint32_t *pt;
+
+    // get/create PT
+    if (pd[pd_idx] & VMM_PRESENT) {                             // case A: PT exists
+        pt = (uint32_t *)(pd[pd_idx] & VMM_ADDR_MASK);
+    } else {                                                    // case B: no PT exists
+
+        uint32_t pt_phys = pmm_alloc_frame();                   // alloc new table
+        if (!pt_phys) {
+            kprintf("VMM: vmm_map_page_in - OOM (pd=0x%p virt=0x%p)\n", pd_phys, virt);
+            return;
+        }
+        pt = (uint32_t *)pt_phys;
+        for (int i = 0; i < 1024; i++) {                        // zero table
+            pt[i] = 0;
+        }
+        pd[pd_idx] = pt_phys | VMM_PRESENT | VMM_WRITABLE | (flags & VMM_USER);     // link to PD
+    }
+
+    pt[PT_INDEX(virt)] = (phys & VMM_ADDR_MASK) | (flags | VMM_PRESENT);            // create mapping
+ 
+    if (vmm_get_current_pd() == pd_phys)                                            // flush TLB entry only when: this PD is active one to avoid
+        tlb_flush_page(virt);
 }
 
 // is range mapped

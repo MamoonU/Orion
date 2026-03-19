@@ -54,4 +54,7 @@ int vmm_range_mapped(uint32_t *pd, uint32_t virt, uint32_t len, int user_only);
 #define USTACK_TOP   0xC0000000u        // 3 GB - user stack top (grows down)
 #define USTACK_SIZE  (4 * PAGE_SIZE)    // 16 KB initial user stack
 
+// virtual address space split
+#define VMM_KERNEL_PDE_END  (UHEAP_START >> 22)     // derived from UHEAP_START:  0x40000000 / 0x400000  =  256 PDEs
+
 #endif
