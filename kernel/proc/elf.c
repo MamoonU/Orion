@@ -45,7 +45,6 @@ static int elf_load_segment(file_t *f, const Elf32_Phdr *ph, uint32_t pd_phys) {
 
     for (uint32_t page = page_start; page < page_end; page += PAGE_SIZE) {              // allocate and map physical pages
 
-        if (vmm_is_mapped(page)) continue;                                              // already mapped
         uint32_t frame = pmm_alloc_frame();                                             // allocate physical frame
 
         if (!frame) {
@@ -53,8 +52,8 @@ static int elf_load_segment(file_t *f, const Elf32_Phdr *ph, uint32_t pd_phys) {
             return -1;
         }
 
-        vmm_map_page_in(pd_phys, page, frame, page_flags);                              // map virtual -> physical
         memset((void *)page, 0, PAGE_SIZE);                                             // zero mapped page: BSS and alignment padding are clean
+        vmm_map_page_in(pd_phys, page, frame, page_flags);                              // map virtual -> physical
     }
 
     if (filesz > 0) {
@@ -154,7 +153,7 @@ uint32_t elf_load(const char *path) {
         goto fail;
     }
 
-    kprintf("ELF: loading \"%s\"  entry=0x%p  phdrs=%u\n", path, ehdr.e_entry, (uint32_t)ehdr.e_phnum, pd_phys);
+    kprintf("ELF: loading \"%s\"  entry=0x%p  phdrs=%u  pd=0x%p\n", path, ehdr.e_entry, (uint32_t)ehdr.e_phnum, pd_phys);
 
     // iterate program headers
     for (uint32_t i = 0; i < (uint32_t)ehdr.e_phnum; i++) {

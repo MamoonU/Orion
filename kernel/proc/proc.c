@@ -132,6 +132,7 @@ pcb_t *proc_create(const char *name, uint8_t priority) {
     }
 
     p->page_directory = (uint32_t *)pd_phys;
+    p->heap_top       = UHEAP_START;
 
     if (priority > PROC_PRIO_IDLE) priority = PROC_PRIO_IDLE;
     p->priority      = priority;

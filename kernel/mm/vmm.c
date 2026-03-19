@@ -225,7 +225,7 @@ uint32_t vmm_create_address_space(void) {
 
     pd_registry_add(pd_phys);                                               //register for future propagation
 
-    kprintf("VMM: new address space @ phys 0x%p (kernel PDEs 0..%u shared)\n", pd_phys);
+    kprintf("VMM: new address space @ phys 0x%p (kernel PDEs 0..%u shared)\n", pd_phys, VMM_KERNEL_PDE_END - 1);
     return pd_phys;                                                         // new PD = return physical address 
 }
 
@@ -252,7 +252,6 @@ void vmm_destroy_address_space(uint32_t pd_phys) {
         for (int j = 0; j < 1024; j++) {
             if (pt[j] & VMM_PRESENT) {
                 pmm_free_frame(pt[j] & VMM_ADDR_MASK);
-                pg_count++;
             }
             pmm_free_frame(pt_phys);    // free the page table frame
             pt_count++;

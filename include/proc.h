@@ -80,6 +80,7 @@ typedef struct pcb {
 
     // address space
     uint32_t       *page_directory;             // (NULL = kernel PD)
+    uint32_t        heap_top;
 
     // scheduler - priority
     uint8_t         priority;

@@ -46,6 +46,7 @@ int proc_exec(pcb_t *p, uint32_t new_entry) {
 
     // ring 3 excecution
     proc_init_user_frame(p, new_entry, USTACK_TOP);
+    p->heap_top = UHEAP_START;                          // heap break for freshh addr space
 
     // reset accounting and re-arm full timeslice
     p->ticks_total     = 0;

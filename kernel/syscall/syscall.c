@@ -366,10 +366,47 @@ static int32_t sys_sbrk(regs_t *r) {
     uint32_t increment = r->ebx;
     pcb_t *p = sched_current();
     if (!p) return -1;
- 
-    // TODO(usermode): allocate pages at p->heap_top, increment it, return old top.
-    (void)increment;
-    return -1;
+
+    if (increment == 0)
+        return (int32_t)p->heap_top;        // query: return current break
+
+    uint32_t old_top = p->heap_top;
+    uint32_t new_top = old_top + increment;
+
+    if (new_top < old_top || new_top > UHEAP_MAX) {
+        kprintf("SBRK: [%u] heap ceiling exceeded\n", (uint32_t)p->pid);
+        return -1;
+    }
+
+    uint32_t map_end = (new_top + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    uint32_t pd_phys = (uint32_t)p->page_directory;
+    uint32_t flags   = VMM_PRESENT | VMM_WRITABLE | VMM_USER;
+
+    for (uint32_t addr = old_top; addr < map_end; addr += PAGE_SIZE) {
+        uint32_t frame = pmm_alloc_frame();
+        if (!frame) {
+            // rollback: free frames allocated this call
+            for (uint32_t undo = old_top; undo < addr; undo += PAGE_SIZE) {
+                uint32_t *pd  = (uint32_t *)pd_phys;
+                uint32_t  pde = pd[undo >> 22];
+                if (pde & VMM_PRESENT) {
+                    uint32_t *pt  = (uint32_t *)(pde & VMM_ADDR_MASK);
+                    uint32_t  pte = pt[(undo >> 12) & 0x3FFu];
+                    if (pte & VMM_PRESENT) {
+                        pmm_free_frame(pte & VMM_ADDR_MASK);
+                        pt[(undo >> 12) & 0x3FFu] = 0;
+                    }
+                }
+            }
+            return -1;
+        }
+        memset((void *)frame, 0, PAGE_SIZE);
+        vmm_map_page_in(pd_phys, addr, frame, flags);
+    }
+
+    p->heap_top = map_end;                                          // always page-aligned after this
+    kprintf("SBRK: [%u] 0x%p -> 0x%p (+%u bytes)\n", (uint32_t)p->pid, old_top, p->heap_top, increment);
+    return (int32_t)old_top;                                        // pointer to start of new region
 }
 
 typedef int32_t (*syscall_fn_t)(regs_t *);

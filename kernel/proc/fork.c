@@ -89,6 +89,7 @@ pid_t proc_fork(uint32_t child_entry) {
     // wire parent-child relationship
     if (parent) {
         child->ppid = parent->pid;
+        child->heap_top = parent->heap_top;                         // inherit (pages already cloned)
         fd_table_close_all(child->fd_table);                        // discard the fresh stdin/out/err
         fd_table_clone(parent->fd_table, child->fd_table);          // inherit parent's fds
  
