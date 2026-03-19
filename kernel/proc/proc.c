@@ -9,6 +9,8 @@
 #include "sched.h"
 #include "fd.h"
 #include "namespace.h"
+#include "vmm.h"
+#include "pmm.h"
 
 static pcb_t proc_table[MAX_PROCS];                                                                     // fixed size array
 
@@ -121,7 +123,15 @@ pcb_t *proc_create(const char *name, uint8_t priority) {
 
     p->esp_kernel  = 0;
 
-    p->page_directory = 0; 
+    uint32_t pd_phys = vmm_create_address_space();
+    if (!pd_phys) {
+        kprintf("PROC: proc_create - failed to create address space for [%u]\n", (uint32_t)pid);
+        kfree_aligned(kstack);
+        pid_free(pid);
+        return 0;
+    }
+
+    p->page_directory = (uint32_t *)pd_phys;
 
     if (priority > PROC_PRIO_IDLE) priority = PROC_PRIO_IDLE;
     p->priority      = priority;
@@ -159,46 +169,6 @@ pcb_t *proc_create(const char *name, uint8_t priority) {
     
 }
 
-void proc_init_frame(pcb_t *p, uint32_t entry_point) {
-
-    if (!p || !p->kstack_top) {
-        kprintf("PROC: proc_init_frame — invalid PCB\n");
-        return;
-    }
-
-    uint32_t *sp = (uint32_t *)p->kstack_top;
-
-    // CPU-pushed
-    *--sp = 0x00000202u;                                                        // eflags  (IF=1, reserved bit 1)
-    *--sp = 0x08;                                                               // cs      (kernel code segment)
-    *--sp = entry_point;                                                        // eip
-
-    // stub metadata
-    *--sp = 0;                                                                  // err_code
-    *--sp = 0;                                                                  // int_no
-
-    // pusha restores in order: edi, esi, ebp, esp, ebx, edx, ecx, eax
-    *--sp = 0;                                                                  // eax
-    *--sp = 0;                                                                  // ecx
-    *--sp = 0;                                                                  // edx
-    *--sp = 0;                                                                  // ebx
-    *--sp = 0;                                                                  // esp_saved (popa ignores this)
-    *--sp = 0;                                                                  // ebp
-    *--sp = 0;                                                                  // esi
-    *--sp = 0;                                                                  // edi
-
-    // segment registers - popped in order: gs, fs, es, ds
-    *--sp = 0x10;                                                               // ds
-    *--sp = 0x10;                                                               // es
-    *--sp = 0x10;                                                               // fs
-    *--sp = 0x10;                                                               // gs  <- esp_kernel points here
-
-    p->esp_kernel = (uint32_t)sp;
-
-    kprintf("PROC: [%u] \"%s\" frame @ 0x%p  eip=0x%p\n",
-    (uint32_t)p->pid, p->name, p->esp_kernel, entry_point);
-}
-
 // transition EMBRYO -> READY
 void proc_set_ready(pcb_t *p) {
 
@@ -214,7 +184,6 @@ void proc_set_ready(pcb_t *p) {
     kprintf("PROC: [%u] \"%s\" -> READY\n", (uint32_t)p->pid, p->name);
 }
 
-
 // transition ZOMBIE -> DESTROY
 void proc_destroy(pcb_t *p) {
 
@@ -226,6 +195,11 @@ void proc_destroy(pcb_t *p) {
     }
 
     kprintf("PROC: destroying [%u] \"%s\"\n", (uint32_t)p->pid, p->name);
+
+    if (p->page_directory) {
+        vmm_destroy_address_space((uint32_t)p->page_directory);
+        p->page_directory = 0;
+    }
 
     if (p->kstack_base) {
         kfree_aligned(p->kstack_base);
@@ -283,6 +257,116 @@ void proc_set_timeslice(pcb_t *p, uint32_t ticks) {
     p->timeslice     = ticks;
 }
 
+// initialise frame 
+void proc_init_frame(pcb_t *p, uint32_t entry_point) {
+
+    if (!p || !p->kstack_top) {
+        kprintf("PROC: proc_init_frame — invalid PCB\n");
+        return;
+    }
+
+    uint32_t *sp = (uint32_t *)p->kstack_top;
+
+    // CPU-pushed
+    *--sp = 0x00000202u;                                                        // eflags  (IF=1, reserved bit 1)
+    *--sp = 0x08;                                                               // cs      (kernel code segment)
+    *--sp = entry_point;                                                        // eip
+
+    // stub metadata
+    *--sp = 0;                                                                  // err_code
+    *--sp = 0;                                                                  // int_no
+
+    // pusha restores in order: edi, esi, ebp, esp, ebx, edx, ecx, eax
+    *--sp = 0;                                                                  // eax
+    *--sp = 0;                                                                  // ecx
+    *--sp = 0;                                                                  // edx
+    *--sp = 0;                                                                  // ebx
+    *--sp = 0;                                                                  // esp_saved (popa ignores this)
+    *--sp = 0;                                                                  // ebp
+    *--sp = 0;                                                                  // esi
+    *--sp = 0;                                                                  // edi
+
+    // segment registers - popped in order: gs, fs, es, ds
+    *--sp = 0x10;                                                               // ds
+    *--sp = 0x10;                                                               // es
+    *--sp = 0x10;                                                               // fs
+    *--sp = 0x10;                                                               // gs  <- esp_kernel points here
+
+    p->esp_kernel = (uint32_t)sp;
+
+    kprintf("PROC: [%u] \"%s\" frame @ 0x%p  eip=0x%p\n", (uint32_t)p->pid, p->name, p->esp_kernel, entry_point);
+}
+
+// build ring-3 frame -> process's kernel stack
+void proc_init_user_frame(pcb_t *p, uint32_t entry_point, uint32_t user_esp) {
+
+    if (!p || !p->kstack_top) {
+        kprintf("PROC: proc_init_user_frame - invalid PCB\n");
+        return;
+    }
+
+    uint32_t *sp = (uint32_t *)p->kstack_top;       // stack
+
+    // CPU pops these during ring-3 iret
+    *--sp = 0x23u;                                  // ss       (user data segment)
+    *--sp = user_esp;                               // user_esp (ring-3 stack pointer)
+    *--sp = 0x00000202u;                            // eflags   (interrupts enabled)
+    *--sp = 0x1Bu;                                  // cs       (user code segment)
+    *--sp = entry_point;                            // eip
+
+    // fake interrupt metadata
+    *--sp = 0;                                      // err_code
+    *--sp = 0;                                      // int_no
+
+    // pusha layout block
+    *--sp = 0; *--sp = 0; *--sp = 0; *--sp = 0;    // eax ecx edx ebx
+    *--sp = 0; *--sp = 0; *--sp = 0; *--sp = 0;    // esp_saved ebp esi edi
+
+    // segment registers
+    *--sp = 0x23u;                                  // ds
+    *--sp = 0x23u;                                  // es
+    *--sp = 0x23u;                                  // fs
+    *--sp = 0x23u;                                  // gs  <- esp_kernel points here
+
+    p->esp_kernel = (uint32_t)sp;                   // fully constructed stack frame
+
+    kprintf("PROC: [%u] \"%s\" user frame @ 0x%p  eip=0x%p  user_esp=0x%p\n", (uint32_t)p->pid, p->name, p->esp_kernel, entry_point, user_esp);
+}
+ 
+// ── NEW: proc_setup_user_stack ───────────────────────────────────────────────
+// Allocates USTACK_SIZE bytes of physical RAM just below USTACK_TOP and maps
+// them into the process's own PD with user read/write permissions.
+// Frames are zeroed before mapping so the stack is clean on first access.
+// Returns 0 on success, -1 on OOM.
+
+// setup usable user-mode stack
+int proc_setup_user_stack(pcb_t *p) {
+
+    if (!p || !p->page_directory) {
+        kprintf("PROC: proc_setup_user_stack - invalid PCB or missing PD\n");
+        return -1;
+    }
+
+    uint32_t pd_phys    = (uint32_t)p->page_directory;
+    uint32_t stack_base = USTACK_TOP - USTACK_SIZE;
+    uint32_t flags      = VMM_PRESENT | VMM_WRITABLE | VMM_USER;
+
+    for (uint32_t addr = stack_base; addr < USTACK_TOP; addr += PAGE_SIZE) {        // loop over each page
+
+        uint32_t frame = pmm_alloc_frame();                                         // alloc phys mem
+        if (!frame) {
+            kprintf("PROC: proc_setup_user_stack - OOM at virt=0x%p\n", addr);
+            return -1;
+        }
+
+        memset((void *)frame, 0, PAGE_SIZE);                                        // zero mem
+        vmm_map_page_in(pd_phys, addr, frame, flags);                               // map into process
+    }
+
+    kprintf("PROC: [%u] user stack mapped 0x%p-0x%p (pd=0x%p)\n", (uint32_t)p->pid, stack_base, USTACK_TOP, pd_phys);
+    return 0;
+}
+
 // diagnostic proccesses dump
 void proc_dump(const pcb_t *p) {
 
@@ -296,7 +380,8 @@ void proc_dump(const pcb_t *p) {
     kprintf("  |  timeslice    = %u / %u ticks\n", p->timeslice, p->timeslice_len);
     kprintf("  |  kstack_base  = %p  top = %p\n", (uint32_t)p->kstack_base, p->kstack_top);
     kprintf("  |  esp0         = %p\n",     p->esp0);
-    kprintf("  |  esp_kernel  = 0x%p\n",    p->esp_kernel);
+    kprintf("  |  esp_kernel   = 0x%p\n",    p->esp_kernel);
+    kprintf("  |  page_dir     = 0x%p\n", (uint32_t)p->page_directory);
     kprintf("  |  eip          = %p  eflags = %p\n", p->context.eip, p->context.eflags);
     kprintf("  |  ticks_total  = %u  scheduled = %ux\n", p->ticks_total, p->ticks_scheduled);
     kprintf("  |  created tick = %u\n",     p->tick_created);
@@ -308,10 +393,7 @@ void proc_dump(const pcb_t *p) {
         kprintf("  |  exit_code    = %u\n", (uint32_t)p->exit_code);
     }
     kprintf("  |  cwd          = \"%s\"\n", p->cwd_path);
-    kprintf("  |  namespace    = 0x%p (%u binds, refcount=%u)\n",
-            (uint32_t)p->namespace,
-            p->namespace ? p->namespace->nbinds  : 0u,
-            p->namespace ? p->namespace->refcount : 0u);
+    kprintf("  |  namespace    = 0x%p (%u binds, refcount=%u)\n", (uint32_t)p->namespace, p->namespace ? p->namespace->nbinds  : 0u, p->namespace ? p->namespace->refcount : 0u);
 
     kprintf("  +---------------------------------\n");
 }
