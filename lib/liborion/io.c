@@ -44,8 +44,7 @@ int getcwd(char *buf, uint32_t len) {
 
 // read directories by index
 int readdir(int fd, uint32_t index, char *name_buf, uint32_t buflen) {
-    return (int)syscall(SYS_READDIR, (uint32_t)fd, index, (uint32_t)name_buf);
-    (void)buflen;
+    return (int)syscall4(SYS_READDIR, (uint32_t)fd, index, (uint32_t)name_buf, buflen);
 }
 
 // mount path -> another
@@ -71,4 +70,30 @@ int mount(int srv_fd, const char *path, uint8_t flags) {
 // extend process heap
 void *sbrk(int increment) {
     return (void *)(uintptr_t)syscall(SYS_SBRK, (uint32_t)increment, 0, 0);
+}
+
+// human-readable errno string
+char *strerror(int errnum) {
+    switch (errnum) {
+        case EPERM:   return "Operation not permitted";
+        case ENOENT:  return "No such file or directory";
+        case ESRCH:   return "No such process";
+        case EINTR:   return "Interrupted system call";
+        case EIO:     return "I/O error";
+        case EBADF:   return "Bad file descriptor";
+        case ECHILD:  return "No child processes";
+        case ENOMEM:  return "Out of memory";
+        case EACCES:  return "Permission denied";
+        case EFAULT:  return "Bad address";
+        case EBUSY:   return "Device or resource busy";
+        case EEXIST:  return "File exists";
+        case ENOTDIR: return "Not a directory";
+        case EISDIR:  return "Is a directory";
+        case EINVAL:  return "Invalid argument";
+        case EMFILE:  return "Too many open files";
+        case ENOSPC:  return "No space left on device";
+        case EPIPE:   return "Broken pipe";
+        case ENOSYS:  return "Function not implemented";
+        default:      return "Unknown error";
+    }
 }

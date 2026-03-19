@@ -69,6 +69,39 @@ void *malloc(uint32_t size) {
     }
 }
 
+// allocate new pages + zero
+void *calloc(uint32_t nmemb, uint32_t size) {
+
+    uint32_t total = nmemb * size;
+    if (!total) return 0;
+
+    void *p = malloc(total);
+    if (p) memset(p, 0, total);
+
+    return p;
+}
+
+// resize existing allocation
+void *realloc(void *ptr, uint32_t new_size) {
+
+    if (!ptr)      return malloc(new_size);         // realloc(NULL, n) = malloc(n)
+
+    if (!new_size) {                                // realloc(p, 0)    = free(p)
+        free(ptr); return 0;
+    }
+
+    block_t *b = (block_t *)((uint8_t *)ptr - HDR_SIZE);
+
+    if (b->size >= new_size) return ptr;            // if already big enough; no-op
+
+    void *new_ptr = malloc(new_size);
+    if (!new_ptr) return 0;                         // OOM: original block untouched
+
+    memcpy(new_ptr, ptr, b->size);                  // copy old payload
+    free(ptr);
+    return new_ptr;
+}
+
 // free pages
 void free(void *ptr) {
 
