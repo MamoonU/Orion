@@ -25,22 +25,6 @@
 extern syscall_dispatch         ; syscall.c
 extern sched_switch_esp         ; sched.c
 
-global sched_start_first
-sched_start_first:
-    mov esp, [esp+4]    ; switch ESP to the process's kernel-stack frame
-
-    pop gs              ; restore segment registers (pushed last = lowest addr)
-    pop fs
-    pop es
-    pop ds
-
-    popa                ; restore all GPRs (edi..eax)
-    add esp, 8          ; discard int_no + err_code
-
-    iret                ; ring-3: pops eip/cs/eflags/useresp/ss  -> user mode
-                        ; ring-0: pops eip/cs/eflags             -> kernel mode
-
-
 global syscall_entry
 syscall_entry:
     cli                     ; disable interrupts

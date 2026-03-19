@@ -95,4 +95,8 @@ int vfs_write(file_t *f, const void *buf, uint32_t len);
 // create a directory at path
 int vfs_mkdir(const char *path);
 
+void vfs_path_resolve(const char *cwd, const char *path, char *out);
+
+int vfs_readdir(file_t *f, uint32_t index, char *name_out, uint32_t name_max, vnode_t **node_out);
+
 #endif
