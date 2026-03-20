@@ -35,6 +35,13 @@ size_t strlen(const char *s) {
     return n;
 }
 
+// string length until # characters
+size_t  strnlen (const char *s, size_t maxlen) {
+    size_t n = 0;
+    while (n < maxlen && s[n]) n++;
+    return n;
+}
+
 // copy string
 char *strcpy(char *dst, const char *src) {
     char *d = dst;
@@ -58,8 +65,8 @@ int strcmp(const char *a, const char *b) {
 
 // compare # characters between strings
 int strncmp(const char *a, const char *b, size_t n) {
-    while (n-- && *a && *a == *b) { a++; b++; }
     if (!n) return 0;
+    while (--n && *a && *a == *b) { a++; b++; }
     return (unsigned char)*a - (unsigned char)*b;
 }
 
@@ -78,6 +85,52 @@ char *strcat(char *dst, const char *src) {
     while (*d) d++;
     while ((*d++ = *src++));
     return dst;
+}
+
+// concatenate until # characters
+char   *strncat (char *dst, const char *src, size_t n) {
+    char *d = dst;
+    while (*d) d++;
+    while (n-- && *src) *d++ = *src++;
+    *d = '\0';
+    return dst;
+}
+
+// find first "needle" in "haystack"
+char   *strstr  (const char *haystack, const char *needle) {
+    if (!*needle) return (char *)haystack;
+    size_t nlen = strlen(needle);
+    while (*haystack) {
+        if (strncmp(haystack, needle, nlen) == 0) {
+            return (char *)haystack;
+        }
+        haystack++;
+    }
+    return 0;
+}
+
+// tokenise string
+char   *strtok  (char *str, const char *delim) {
+    static char *saved = 0;
+    if (str) saved = str;
+    if (!saved || !*saved) return 0;
+
+    while (*saved && strchr(delim, *saved)) saved++;    // skip leading delimiters
+    if (!*saved) return 0;
+
+    char *token = saved;
+    while (*saved && !strchr(delim, *saved)) saved++;   // walk to end of token
+    if (*saved) *saved++ = '\0';                        // null-terminate and advance
+
+    return token;
+}
+
+// duplicate string
+char   *strdup  (const char *s) {
+    uint32_t len = (uint32_t)strlen(s) + 1;
+    char *copy = malloc(len);
+    if (copy) memcpy(copy, s, len);
+    return copy;
 }
 
 // ascii -> integer
@@ -120,3 +173,4 @@ char *itoa(int value, char *buf, int base) {
     strcpy(buf, &tmp[i + 1]);
     return buf;
 }
+

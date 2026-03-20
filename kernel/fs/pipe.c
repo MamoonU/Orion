@@ -140,6 +140,10 @@ static int pipe_write_op(vnode_t *v, const void *buf, uint32_t len, uint32_t off
 
         if (pipe->readers == 0) {                                               // broken pipe detection
             kprintf("PIPE: write on broken pipe\n");
+            pcb_t *writer = sched_current();
+            if (writer) {
+                writer->pending_signals |= (1u << SIGPIPE);
+            }
             return -1;
         }
 

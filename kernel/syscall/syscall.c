@@ -169,35 +169,82 @@ static int32_t sys_execve(regs_t *r) {
 
     if (!syscall_validate_ptr(path, 1)) return -1;
 
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+ 
+    kprintf("EXECVE: [%u] \"%s\" loading \"%s\"\n", (uint32_t)p->pid, p->name, path);
+
+    char name_copy[64];
+    strncpy(name_copy, path, sizeof(name_copy) - 1);
+    name_copy[sizeof(name_copy) - 1] = '\0';
+ 
+    // 1. replace address space
+    if (p->page_directory) {
+        vmm_destroy_address_space((uint32_t)p->page_directory);
+        p->page_directory = 0;
+    }
+    uint32_t new_pd = vmm_create_address_space();
+    if (!new_pd) { kprintf("EXECVE: OOM creating address space\n"); return -1; }
+    p->page_directory = (uint32_t *)new_pd;
+ 
+    // 2. load ELF into new PD (elf_load uses sched_current()->page_directory)
     uint32_t entry = elf_load(path);
     if (!entry) {
         kprintf("EXECVE: failed to load \"%s\"\n", path);
+        vmm_destroy_address_space(new_pd);
+        p->page_directory = 0;
         return -1;
     }
 
-    pcb_t *p = sched_current();
-    if (!p) return -1;
+    // 3. map user stack
+    if (proc_setup_user_stack(p) != 0) {
+        kprintf("EXECVE: failed to set up user stack\n");
+        vmm_destroy_address_space(new_pd);
+        p->page_directory = 0;
+        return -1;
+    }
 
-    kprintf("EXECVE: [%u] \"%s\" -> ELF entry 0x%p\n",
-            (uint32_t)p->pid, path, entry);
+    // 4. patch saved iret frame for ring-3 return
+    r->eip      = entry;
+    r->cs       = 0x1Bu;            // GDT[3] user code  RPL=3
+    r->eflags   = 0x00000202u;      // IF=1, reserved
 
-    // Redirect the iret target to the new binary's entry point.
-    // Clear all general-purpose registers so the new image starts clean.
-    r->eip       = entry;
+    // 5. activate new PD
+    vmm_switch(new_pd);
+
+    for (int i = 0; i < NSIG; i++) p->signal_handlers[i] = 0;   // reset signal handlers to SIG_DFL: old VAs are invalid in the new image
+    p->signal_trampoline = 0;
+    p->in_signal         = 0;
+    p->pending_signals   = 0;
+    p->signal_mask       = 0;
+
+    uint32_t *usp = (uint32_t *)(USTACK_TOP - 8);
+    
+    usp[0] = 0;                     // argc = 0
+    usp[1] = 0;                     // argv = NULL
+    r->useresp  = USTACK_TOP - 8;   // ring-3 stack pointer
+    r->ss       = 0x23u;            // GDT[4] user data  RPL=3
+
+    r->ds = 0x23u;
+    r->es = 0x23u;
+    r->fs = 0x23u;
+    r->gs = 0x23u;
+
     r->eax       = 0;
     r->ebx       = 0;
     r->ecx       = 0;
     r->edx       = 0;
+
     r->esi       = 0;
     r->edi       = 0;
     r->ebp       = 0;
-    r->eflags    = 0x00000202u;
 
     // Reset scheduler accounting so the new image gets a full timeslice
     p->timeslice       = p->timeslice_len;
     p->ticks_total     = 0;
     p->ticks_scheduled = 0;
 
+    kprintf("EXECVE: [%u] \"%s\" -> ring-3 entry=0x%p  stack=0x%p\n", (uint32_t)p->pid, name_copy, entry, USTACK_TOP);
     return 0;
 }
 
@@ -334,10 +381,90 @@ static int32_t sys_sbrk(regs_t *r) {
     uint32_t increment = r->ebx;
     pcb_t *p = sched_current();
     if (!p) return -1;
- 
-    // TODO(usermode): allocate pages at p->heap_top, increment it, return old top.
-    (void)increment;
-    return -1;
+
+    if (increment == 0)
+        return (int32_t)p->heap_top;        // query: return current break
+
+    uint32_t old_top = p->heap_top;
+    uint32_t new_top = old_top + increment;
+
+    if (new_top < old_top || new_top > UHEAP_MAX) {
+        kprintf("SBRK: [%u] heap ceiling exceeded\n", (uint32_t)p->pid);
+        return -1;
+    }
+
+    uint32_t map_end = (new_top + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    uint32_t pd_phys = (uint32_t)p->page_directory;
+    uint32_t flags   = VMM_PRESENT | VMM_WRITABLE | VMM_USER;
+
+    for (uint32_t addr = old_top; addr < map_end; addr += PAGE_SIZE) {
+        uint32_t frame = pmm_alloc_frame();
+        if (!frame) {
+            // rollback: free frames allocated this call
+            for (uint32_t undo = old_top; undo < addr; undo += PAGE_SIZE) {
+                uint32_t *pd  = (uint32_t *)pd_phys;
+                uint32_t  pde = pd[undo >> 22];
+                if (pde & VMM_PRESENT) {
+                    uint32_t *pt  = (uint32_t *)(pde & VMM_ADDR_MASK);
+                    uint32_t  pte = pt[(undo >> 12) & 0x3FFu];
+                    if (pte & VMM_PRESENT) {
+                        pmm_free_frame(pte & VMM_ADDR_MASK);
+                        pt[(undo >> 12) & 0x3FFu] = 0;
+                    }
+                }
+            }
+            return -1;
+        }
+        memset((void *)frame, 0, PAGE_SIZE);
+        vmm_map_page_in(pd_phys, addr, frame, flags);
+    }
+
+    p->heap_top = map_end;                                          // always page-aligned after this
+    kprintf("SBRK: [%u] 0x%p -> 0x%p (+%u bytes)\n", (uint32_t)p->pid, old_top, p->heap_top, increment);
+    return (int32_t)old_top;                                        // pointer to start of new region
+}
+
+// SYS_SIGNAL (22): store handler + trampoline in calling process PCB
+static int32_t sys_signal(regs_t *r) {
+    int      signum     = (int)r->ebx;
+    uint32_t handler    = r->ecx;
+    uint32_t trampoline = r->edx;
+
+    if (signum <= 0 || signum >= NSIG) return -1;
+    if (signum == SIGKILL || signum == SIGSTOP) return -1;     // uncatchable
+
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+
+    p->signal_handlers[signum] = handler;
+    p->signal_trampoline       = trampoline;
+    return 0;
+}
+
+// SYS_SIGRETURN (23): restore pre-signal context saved by kernel
+static int32_t sys_sigreturn(regs_t *r) {
+    pcb_t *p = sched_current();
+    if (!p || !p->in_signal) return -1;
+
+    *r          = p->signal_saved_ctx;      // restore full register frame
+    p->in_signal = 0;
+    return 0;
+}
+
+// SYS_KILL (24): mark signal as pending on target process
+static int32_t sys_kill(regs_t *r) {
+    pid_t pid    = (pid_t)(int32_t)r->ebx;
+    int   signum = (int)r->ecx;
+
+    if (signum < 0 || signum >= NSIG) return -1;
+
+    pcb_t *target = proc_get(pid);
+    if (!target) return -1;
+
+    if (signum == 0) return 0;                              // sig 0 = existence check only
+
+    target->pending_signals |= (1u << signum);              // queue the signal
+    return 0;
 }
 
 typedef int32_t (*syscall_fn_t)(regs_t *);
@@ -366,6 +493,9 @@ static syscall_fn_t syscall_table[SYSCALL_COUNT] = {
     [SYS_NSDUMP]  = sys_nsdump,
     [SYS_MOUNT]   = sys_mount,
     [SYS_SBRK]    = sys_sbrk,
+    [SYS_SIGNAL]  = sys_signal,
+    [SYS_SIGRETURN] = sys_sigreturn,
+    [SYS_KILL]    = sys_kill,
 };
 
 void syscall_dispatch(regs_t *r) {

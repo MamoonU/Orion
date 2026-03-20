@@ -40,8 +40,21 @@ void vmm_destroy_address_space(uint32_t pd_phys);                               
 void vmm_switch(uint32_t pd_phys);                                                  // load pd_phys into CR3 (flush TLB)
 uint32_t vmm_get_kernel_pd(void);                                                   // return the physical address of the currently active kernel PD
 
+void vmm_sync_kernel_pdes(uint32_t pd_phys);                                            // propagate new kernel PDEs into existing process PD
+void vmm_map_page_in(uint32_t pd_phys, uint32_t virt, uint32_t phys, uint32_t flags);   // map page into explicit PD (for user-space heap/stack setup)
+uint32_t vmm_get_current_pd(void);                                                      // read current CR3 (phys addr of active PD)
+
 // validate (virt, virt+len) is fully mapped and present in the given PD
 // user_only = 1: also require VMM_USER bit (for ring-3 pointer checks)
 int vmm_range_mapped(uint32_t *pd, uint32_t virt, uint32_t len, int user_only);
+
+// user address space layout
+#define UHEAP_START  0x40000000u        // 1 GB - user heap base
+#define UHEAP_MAX    0x80000000u        // 2 GB - user heap ceiling (1 GB of headroom)
+#define USTACK_TOP   0xC0000000u        // 3 GB - user stack top (grows down)
+#define USTACK_SIZE  (4 * PAGE_SIZE)    // 16 KB initial user stack
+
+// virtual address space split
+#define VMM_KERNEL_PDE_END  (UHEAP_START >> 22)     // derived from UHEAP_START:  0x40000000 / 0x400000  =  256 PDEs
 
 #endif

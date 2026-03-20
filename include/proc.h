@@ -47,6 +47,13 @@ typedef enum {
 
 #define PROC_PRIO_DEFAULT   PROC_PRIO_NORMAL
 
+#define NSIG                32              // matches liborion signal count
+#define SIGKILL             9               // kill: cannot be caught or ignored
+#define SIGSTOP             19              // stop: cannot be caught or ignored
+#define SIGSTOP             19
+#define SIGPIPE             13
+#define SIGCHLD             17
+
 // Default time quantum in PIT ticks
 #define PROC_TIMESLICE_DEFAULT  10          // 10 ticks = 100 ms
 
@@ -80,6 +87,7 @@ typedef struct pcb {
 
     // address space
     uint32_t       *page_directory;             // (NULL = kernel PD)
+    uint32_t        heap_top;
 
     // scheduler - priority
     uint8_t         priority;
@@ -106,8 +114,15 @@ typedef struct pcb {
     file_t          *fd_table[FD_MAX];
 
     // filesystem context (future: per-process 9P namespace binding point)
-    char            cwd_path[VFS_PATH_MAX]; // current working directory (absolute path)
-    ns_t        *namespace;              // namespace root vnode (NULL = global VFS root)
+    char            cwd_path[VFS_PATH_MAX];     // current working directory (absolute path)
+    ns_t            *namespace;                 // namespace root vnode (NULL = global VFS root)
+
+    uint32_t        pending_signals;            // bitmask: bit N = signal N queued
+    uint32_t        signal_mask;                // bitmask: bit N = signal N blocked
+    uint32_t        signal_handlers[NSIG];      // registered user-space handler VAs
+    uint32_t        signal_trampoline;          // VA of sigreturn_trampoline in user image
+    cpu_context_t   signal_saved_ctx;           // full register snapshot saved before delivery
+    uint8_t         in_signal;                  // 1 = currently inside a signal handler
 
 } pcb_t;
 
@@ -122,6 +137,9 @@ void   proc_set_ready(pcb_t *p);
 void   proc_destroy(pcb_t *p);
 
 void   proc_init_frame(pcb_t *p, uint32_t entry_point);         // fake irq-stub register frame for scheduler
+
+void   proc_init_user_frame(pcb_t *p, uint32_t entry_point, uint32_t user_esp);     // build ring-3 iret frame on the kernel stack
+int    proc_setup_user_stack(pcb_t *p);                                             // allocate and map USTACK_SIZE bytes below USTACK_TOP in the process's page
 
 pcb_t *proc_get(pid_t pid);                                     // lookup pid
 const char *proc_state_name(proc_state_t s);
@@ -139,5 +157,7 @@ int    proc_exec(pcb_t *p, uint32_t new_entry);                 // replace stopp
 
 void   proc_dump(const pcb_t *p);                               // debugging
 void   proc_dump_all(void);
+
+void   proc_deliver_signals(regs_t *r);                         // signal delivery: called from irq.asm and syscall.asm before every iret to ring-3
 
 #endif

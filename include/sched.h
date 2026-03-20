@@ -24,4 +24,6 @@ uint32_t sched_switch_esp(uint32_t current_esp);                // switch_proces
 
 void sched_start(void);                                         // launch scheduler
 
+extern void sched_start_first(uint32_t esp_kernel);             // syscall.asm
+
 #endif
