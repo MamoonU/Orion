@@ -100,6 +100,17 @@ pid_t proc_fork(uint32_t child_entry) {
         ns_unref(child->namespace);             // drop fresh empty ns from proc_create
         child->namespace = parent->namespace;   // share parent's namespace
         ns_ref(child->namespace);               // copy-on-bind isolates on first mutation
+
+        // inherit signal handlers and mask - POSIX: fork copies dispositions
+        for (int i = 0; i < NSIG; i++) {
+            child->signal_handlers[i] = parent->signal_handlers[i];
+        }
+        child->signal_mask       = parent->signal_mask;
+        child->signal_trampoline = parent->signal_trampoline;
+
+        // do NOT inherit pending signals or in_signal state - child starts clean
+        child->pending_signals = 0;
+        child->in_signal       = 0;
     }
 
     proc_init_frame(child, child_entry);                                            // build child stack frame

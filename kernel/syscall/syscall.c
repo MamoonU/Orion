@@ -212,6 +212,12 @@ static int32_t sys_execve(regs_t *r) {
     // 5. activate new PD
     vmm_switch(new_pd);
 
+    for (int i = 0; i < NSIG; i++) p->signal_handlers[i] = 0;   // reset signal handlers to SIG_DFL: old VAs are invalid in the new image
+    p->signal_trampoline = 0;
+    p->in_signal         = 0;
+    p->pending_signals   = 0;
+    p->signal_mask       = 0;
+
     uint32_t *usp = (uint32_t *)(USTACK_TOP - 8);
     
     usp[0] = 0;                     // argc = 0
