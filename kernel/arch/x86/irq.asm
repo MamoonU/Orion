@@ -1,7 +1,8 @@
 [bits 32]
 
-extern irq_handler          ; irq.c
-extern sched_switch_esp     ; sched.c
+extern irq_handler              ; irq.c
+extern sched_switch_esp         ; sched.c
+extern proc_deliver_signals     ; proc.c — check + deliver pending signals before iret
 
 ; macro defining ISR_NOERR, 1 parameter
 %macro IRQ 1
@@ -29,25 +30,33 @@ isr_common_stub:
 
     push esp                ; pass pointer to stack
     call irq_handler
-    add esp, 4
+    add esp, 4              ; restore esp to frame top
 
-    push esp                ; pass current esp (= regs_t* of current process)
+    push esp                ; pass current esp ( regs_t* of current process)
     call sched_switch_esp   ; returns 0 or new esp
     add  esp, 4             ; restore esp to frame top
+
+    push esp                ; pass current esp to scheduler
+    call sched_switch_esp   ; returns 0 (stay) or new esp (switch)
+    add esp, 4              ; restore esp to frame top
 
     test eax, eax           ; was a switch requested?
     jz   .no_switch
     mov  esp, eax           ; switch stack -> next process's irq frame
 
 .no_switch:
-    pop gs              ; restore CPU state
+    push esp                    ; pass current esp
+    call proc_deliver_signals   ; check r->cs (if RPL != 3, return)
+    add esp, 4                  ; restore esp to frame top
+
+    pop gs                      ; restore CPU state
     pop fs
     pop es
     pop ds
 
-    popa
-    add esp, 8      ; Pop error code + int number
-    iret
+    popa                        ; restore GPRs
+    add esp, 8                  ; pop error code + int number
+    iret                        ; return (ring-3: pops useresp + ss too)
 
 global sched_start_first
 sched_start_first:
@@ -59,9 +68,8 @@ sched_start_first:
     pop ds
 
     popa                    ; restore GPRs
-
     add esp, 8              ; discard int_no + err_code
-    iret                    ; jump to entry_point with eflags. IF=1
+    iret                    ; jump to entry_point with eflags
 
 IRQ 0
 IRQ 1
