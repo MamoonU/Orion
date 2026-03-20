@@ -165,9 +165,15 @@ pcb_t *proc_create(const char *name, uint8_t priority) {
     p->cwd_path[VFS_PATH_MAX - 1] = '\0';
     p->namespace = ns_create();                             // fresh namespace
 
+    // signal state - all zeroed: SIG_DFL for every signal, no pending, not in handler
+    p->pending_signals   = 0;
+    p->signal_mask       = 0;
+    p->in_signal         = 0;
+    p->signal_trampoline = 0;
+    for (int i = 0; i < NSIG; i++) p->signal_handlers[i] = 0;
+
     kprintf("PROC: created [%u] \"%s\" prio=%u quantum=%u kstack=0x%p\n", (uint32_t)pid, p->name, (uint32_t)priority, tslice, (uint32_t)kstack);
     return p;
-    
 }
 
 // transition EMBRYO -> READY
@@ -334,12 +340,6 @@ void proc_init_user_frame(pcb_t *p, uint32_t entry_point, uint32_t user_esp) {
     kprintf("PROC: [%u] \"%s\" user frame @ 0x%p  eip=0x%p  user_esp=0x%p\n", (uint32_t)p->pid, p->name, p->esp_kernel, entry_point, user_esp);
 }
  
-// ── NEW: proc_setup_user_stack ───────────────────────────────────────────────
-// Allocates USTACK_SIZE bytes of physical RAM just below USTACK_TOP and maps
-// them into the process's own PD with user read/write permissions.
-// Frames are zeroed before mapping so the stack is clean on first access.
-// Returns 0 on success, -1 on OOM.
-
 // setup usable user-mode stack
 int proc_setup_user_stack(pcb_t *p) {
 
@@ -420,23 +420,28 @@ void proc_exit(int32_t exit_code) {
     pcb_t *p = sched_current();
     if (!p) { kprintf("PROC: proc_exit — no current process\n"); return; }
 
-    kprintf("PROC: [%u] \"%s\" exiting (code=%d)\n",
-            (uint32_t)p->pid, p->name, (int)exit_code);
+    kprintf("PROC: [%u] \"%s\" exiting (code=%d)\n", (uint32_t)p->pid, p->name, (int)exit_code);
 
     p->exit_code = exit_code;
     p->state     = PROC_ZOMBIE;
 
     if (p->ppid != PID_KERNEL && p->ppid != PID_INVALID) {
+
         pcb_t *parent = proc_get(p->ppid);
-        if (parent && parent->waiting) {
-            if (parent->wait_for_pid == PID_INVALID || parent->wait_for_pid == p->pid) {
-                kprintf("PROC: waking parent [%u] \"%s\"\n",
-                        (uint32_t)parent->pid, parent->name);
-                proc_wake(parent);
+
+        if (parent) {
+
+            parent->pending_signals |= (1u << SIGCHLD);
+
+            if (parent->waiting) {
+
+                if (parent->wait_for_pid == PID_INVALID || parent->wait_for_pid == p->pid) {
+                    kprintf("PROC: waking parent [%u] \"%s\"\n", (uint32_t)parent->pid, parent->name);
+                    proc_wake(parent);
+                }
             }
         }
     }
-
     sched_remove(p);
     sched_yield();
 }
@@ -507,4 +512,55 @@ void proc_wake(pcb_t *p) {
     sched_add(p);
 
     kprintf("PROC: [%u] \"%s\" woken -> READY\n", (uint32_t)p->pid, p->name);
+}
+
+// check process -> ring-3 has pending signals
+void proc_deliver_signals(regs_t *r) {
+
+    pcb_t *p = sched_current();
+    if (!p) return;
+
+    if ((r->cs & 0x3) != 3) return;                                 // only deliver when returning to ring-3 (RPL bits of CS = 3)
+
+    uint32_t deliverable = p->pending_signals & ~p->signal_mask;
+    if (!deliverable) return;                                       // no deliverable signals
+
+    if (p->in_signal) return;                                       // no nesting - if already inside a handler: wait for sigreturn
+
+    int signum = -1;
+    for (int i = 1; i < NSIG; i++) {                                // find the lowest-numbered pending signal (signal 1 has highest priority)
+        if (deliverable & (1u << i)) {
+            signum = i;
+            break;
+        }
+    }
+    if (signum < 0) return;
+
+    p->pending_signals &= ~(1u << signum);                          // consume pending bit
+
+    uint32_t handler = p->signal_handlers[signum];
+
+    if (handler == 1) return;                                                   // SIG_IGN: silently discard
+
+    if (handler == 0) {                                                         // SIG_DFL: terminate
+        kprintf("SIGNAL: [%u] \"%s\" killed by signal %d (SIG_DFL)\n", (uint32_t)p->pid, p->name, signum);
+        proc_exit(-(signum));
+        return;
+    }
+
+    // custom handler delivery
+
+    p->signal_saved_ctx = *r;                       // save complete pre-signal CPU register state
+    p->in_signal        = 1;
+
+    uint32_t new_esp    = r->useresp - 8;           // build fake stack frame
+    uint32_t *ustack    = (uint32_t *)new_esp;      // valid: process PD is active in CR3
+
+    ustack[0]           = p->signal_trampoline;     // [esp+0]: return address for handler
+    ustack[1]           = (uint32_t)signum;         // [esp+4]: argument
+
+    r->useresp = new_esp;                           // redirect iret to the handler
+    r->eip     = handler;
+
+    kprintf("SIGNAL: [%u] \"%s\" sig=%d -> handler=0x%p  trampoline=0x%p\n", (uint32_t)p->pid, p->name, signum, handler, p->signal_trampoline);
 }

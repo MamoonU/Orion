@@ -155,4 +155,6 @@ int    proc_exec(pcb_t *p, uint32_t new_entry);                 // replace stopp
 void   proc_dump(const pcb_t *p);                               // debugging
 void   proc_dump_all(void);
 
+void   proc_deliver_signals(regs_t *r);                         // signal delivery: called from irq.asm and syscall.asm before every iret to ring-3
+
 #endif
