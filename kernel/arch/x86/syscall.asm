@@ -24,6 +24,7 @@
 
 extern syscall_dispatch         ; syscall.c
 extern sched_switch_esp         ; sched.c
+extern proc_deliver_signals     ; proc.c — check + deliver pending signals before iret
 
 global syscall_entry
 syscall_entry:
@@ -61,11 +62,15 @@ syscall_entry:
     mov esp, eax            ; switch to next process's kernel stack
 
 .no_switch:
-    pop gs                  ; restore segment registers
+    push esp                    ; signal delivery
+    call proc_deliver_signals
+    add esp, 4
+
+    pop gs                      ; restore segment registers
     pop fs
     pop es
     pop ds
 
-    popa                    ; restore general registers
-    add esp, 8              ; discard err_code + int_no
-    iret                    ; return to caller
+    popa                        ; restore general registers
+    add esp, 8                  ; discard err_code + int_no
+    iret                        ; return to caller

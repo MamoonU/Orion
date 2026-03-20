@@ -36,10 +36,6 @@ isr_common_stub:
     call sched_switch_esp   ; returns 0 or new esp
     add  esp, 4             ; restore esp to frame top
 
-    push esp                ; pass current esp to scheduler
-    call sched_switch_esp   ; returns 0 (stay) or new esp (switch)
-    add esp, 4              ; restore esp to frame top
-
     test eax, eax           ; was a switch requested?
     jz   .no_switch
     mov  esp, eax           ; switch stack -> next process's irq frame

@@ -50,6 +50,9 @@ typedef enum {
 #define NSIG                32              // matches liborion signal count
 #define SIGKILL             9               // kill: cannot be caught or ignored
 #define SIGSTOP             19              // stop: cannot be caught or ignored
+#define SIGSTOP             19
+#define SIGPIPE             13
+#define SIGCHLD             17
 
 // Default time quantum in PIT ticks
 #define PROC_TIMESLICE_DEFAULT  10          // 10 ticks = 100 ms
