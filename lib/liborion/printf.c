@@ -178,7 +178,6 @@ int snprintf(char *buf, uint32_t size, const char *fmt, ...) {
     return n;
 }
 
-
 // write formatted output to arbitrary fd (no FILE*)
 int fprintf(int fd, const char *fmt, ...) {
     char buf[512];

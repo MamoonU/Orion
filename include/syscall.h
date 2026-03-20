@@ -28,9 +28,13 @@
 #define SYS_UNBIND      18      // EBX = new_path
 #define SYS_NSDUMP      19      // (debug) dump calling process namespace
 #define SYS_MOUNT       20      // EBX = srv_fd, ECX = path, EDX = ns_flags
-#define SYS_SBRK        21      // EBX = increment (bytes) — extend process heap
+#define SYS_SBRK        21      // EBX = increment (bytes) - extend process heap
+#define SYS_SIGNAL      22      // EBX = signum, ECX = handler, EDX = trampoline
+#define SYS_SIGRETURN   23      //                                  - restore pre-signal context
+#define SYS_KILL        24      // EBX = pid, ECX = signum          - send signal to process
 
-#define SYSCALL_COUNT   22
+#define SYSCALL_COUNT   25
+
 
 // kernel-side entry point (registered in IDT as int 0x80)
 void syscall_dispatch(regs_t *r);

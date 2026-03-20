@@ -173,6 +173,10 @@ static int32_t sys_execve(regs_t *r) {
     if (!p) return -1;
  
     kprintf("EXECVE: [%u] \"%s\" loading \"%s\"\n", (uint32_t)p->pid, p->name, path);
+
+    char name_copy[64];
+    strncpy(name_copy, path, sizeof(name_copy) - 1);
+    name_copy[sizeof(name_copy) - 1] = '\0';
  
     // 1. replace address space
     if (p->page_directory) {
@@ -202,10 +206,18 @@ static int32_t sys_execve(regs_t *r) {
 
     // 4. patch saved iret frame for ring-3 return
     r->eip      = entry;
-    r->cs       = 0x1Bu;          // GDT[3] user code  RPL=3
-    r->eflags   = 0x00000202u;    // IF=1, reserved
-    r->useresp  = USTACK_TOP;     // ring-3 stack pointer
-    r->ss       = 0x23u;          // GDT[4] user data  RPL=3
+    r->cs       = 0x1Bu;            // GDT[3] user code  RPL=3
+    r->eflags   = 0x00000202u;      // IF=1, reserved
+
+    // 5. activate new PD
+    vmm_switch(new_pd);
+
+    uint32_t *usp = (uint32_t *)(USTACK_TOP - 8);
+    
+    usp[0] = 0;                     // argc = 0
+    usp[1] = 0;                     // argv = NULL
+    r->useresp  = USTACK_TOP - 8;   // ring-3 stack pointer
+    r->ss       = 0x23u;            // GDT[4] user data  RPL=3
 
     r->ds = 0x23u;
     r->es = 0x23u;
@@ -221,15 +233,12 @@ static int32_t sys_execve(regs_t *r) {
     r->edi       = 0;
     r->ebp       = 0;
 
-    // 5. activate new PD
-    vmm_switch(new_pd);
-
     // Reset scheduler accounting so the new image gets a full timeslice
     p->timeslice       = p->timeslice_len;
     p->ticks_total     = 0;
     p->ticks_scheduled = 0;
 
-    kprintf("EXECVE: [%u] \"%s\" -> ring-3 entry=0x%p  stack=0x%p\n", (uint32_t)p->pid, path, entry, USTACK_TOP);
+    kprintf("EXECVE: [%u] \"%s\" -> ring-3 entry=0x%p  stack=0x%p\n", (uint32_t)p->pid, name_copy, entry, USTACK_TOP);
     return 0;
 }
 
@@ -409,6 +418,49 @@ static int32_t sys_sbrk(regs_t *r) {
     return (int32_t)old_top;                                        // pointer to start of new region
 }
 
+// SYS_SIGNAL (22): store handler + trampoline in calling process PCB
+static int32_t sys_signal(regs_t *r) {
+    int      signum     = (int)r->ebx;
+    uint32_t handler    = r->ecx;
+    uint32_t trampoline = r->edx;
+
+    if (signum <= 0 || signum >= NSIG) return -1;
+    if (signum == SIGKILL || signum == SIGSTOP) return -1;     // uncatchable
+
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+
+    p->signal_handlers[signum] = handler;
+    p->signal_trampoline       = trampoline;
+    return 0;
+}
+
+// SYS_SIGRETURN (23): restore pre-signal context saved by kernel
+static int32_t sys_sigreturn(regs_t *r) {
+    pcb_t *p = sched_current();
+    if (!p || !p->in_signal) return -1;
+
+    *r          = p->signal_saved_ctx;      // restore full register frame
+    p->in_signal = 0;
+    return 0;
+}
+
+// SYS_KILL (24): mark signal as pending on target process
+static int32_t sys_kill(regs_t *r) {
+    pid_t pid    = (pid_t)(int32_t)r->ebx;
+    int   signum = (int)r->ecx;
+
+    if (signum < 0 || signum >= NSIG) return -1;
+
+    pcb_t *target = proc_get(pid);
+    if (!target) return -1;
+
+    if (signum == 0) return 0;                              // sig 0 = existence check only
+
+    target->pending_signals |= (1u << signum);              // queue the signal
+    return 0;
+}
+
 typedef int32_t (*syscall_fn_t)(regs_t *);
 
 // define dispatch table
@@ -435,6 +487,9 @@ static syscall_fn_t syscall_table[SYSCALL_COUNT] = {
     [SYS_NSDUMP]  = sys_nsdump,
     [SYS_MOUNT]   = sys_mount,
     [SYS_SBRK]    = sys_sbrk,
+    [SYS_SIGNAL]  = sys_signal,
+    [SYS_SIGRETURN] = sys_sigreturn,
+    [SYS_KILL]    = sys_kill,
 };
 
 void syscall_dispatch(regs_t *r) {

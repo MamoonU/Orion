@@ -73,6 +73,7 @@
 #define SIGSTOP     19          // stop: cannot be caught or ignored
 
 typedef void (*sig_handler_t)(int);         // signal handler type and special values
+extern void sigreturn_trampoline(void);     // defined in syscall.asm
 
 #define SIG_DFL     ((sig_handler_t)0)      // default kernel action
 #define SIG_IGN     ((sig_handler_t)1)      // ignore signal
@@ -154,6 +155,7 @@ int     putchar(int c);                                                     // w
 int     puts   (const char *s);                                             // write string + newline
 int     printf (const char *fmt, ...);                                      // formatted output
 int     sprintf(char *buf, const char *fmt, ...);                           // formatted output -> buffer
+int     fprintf (int fd, const char *fmt, ...);                             // write formatted output to arbitrary fd (no FILE*)
 int     vsnprintf(char *buf, uint32_t size, const char *fmt, va_list args); // output safely formatted va_list args
 int     vprintf (const char *fmt, va_list args);                            // output va_list args 
 int     snprintf(char *buf, uint32_t size, const char *fmt, ...);           // safely formatted output -> buffer

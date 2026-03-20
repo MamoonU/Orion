@@ -47,6 +47,10 @@ typedef enum {
 
 #define PROC_PRIO_DEFAULT   PROC_PRIO_NORMAL
 
+#define NSIG                32              // matches liborion signal count
+#define SIGKILL             9               // kill: cannot be caught or ignored
+#define SIGSTOP             19              // stop: cannot be caught or ignored
+
 // Default time quantum in PIT ticks
 #define PROC_TIMESLICE_DEFAULT  10          // 10 ticks = 100 ms
 
@@ -109,6 +113,13 @@ typedef struct pcb {
     // filesystem context (future: per-process 9P namespace binding point)
     char            cwd_path[VFS_PATH_MAX];     // current working directory (absolute path)
     ns_t            *namespace;                 // namespace root vnode (NULL = global VFS root)
+
+    uint32_t        pending_signals;            // bitmask: bit N = signal N queued
+    uint32_t        signal_mask;                // bitmask: bit N = signal N blocked
+    uint32_t        signal_handlers[NSIG];      // registered user-space handler VAs
+    uint32_t        signal_trampoline;          // VA of sigreturn_trampoline in user image
+    cpu_context_t   signal_saved_ctx;           // full register snapshot saved before delivery
+    uint8_t         in_signal;                  // 1 = currently inside a signal handler
 
 } pcb_t;
 

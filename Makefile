@@ -2,12 +2,22 @@
 
 ASM  := nasm
 CC   := i686-elf-gcc
+AR   := i686-elf-ar
 GRUB := grub-mkrescue
 
+# kernel: can see all kernel headers
 CFLAGS   := -ffreestanding -O2 -Wall -Wextra -I include
+
+# liborion: freestanding userspace — must NOT see kernel headers
+UFLAGS   := -ffreestanding -O2 -Wall -Wextra -I lib/liborion \
+            -fno-builtin -nostdlib
+
 ASMFLAGS := -f elf32
 LDFLAGS  := -T linker.ld -ffreestanding -O2 -nostdlib
 
+# ─────────────────────────────────────────────────────────────
+# Kernel objects
+# ─────────────────────────────────────────────────────────────
 ASM_OBJS := \
 	kernel/arch/x86/boot.o     \
 	kernel/arch/x86/gdt_asm.o  \
@@ -49,20 +59,51 @@ C_OBJS := \
 
 OBJS := $(ASM_OBJS) $(C_OBJS)
 
+# ─────────────────────────────────────────────────────────────
+# liborion — userspace runtime static library
+# .lo = userspace object (distinct from kernel .o)
+# ─────────────────────────────────────────────────────────────
+LIBORION_OBJS := \
+	lib/liborion/syscall.lo    \
+	lib/liborion/start.lo      \
+	lib/liborion/proc.lo       \
+	lib/liborion/signal.lo     \
+	lib/liborion/io.lo         \
+	lib/liborion/malloc.lo     \
+	lib/liborion/printf.lo     \
+	lib/liborion/string.lo     \
+	lib/liborion/env.lo
+
+LIBORION := lib/liborion/liborion.a
+
 ISODIR := isodir/boot
 
 .PHONY: all clean run
 
 all: myos.iso
 
-clean:
-	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
-	@echo "┃                            MAKE CLEAN                             ┃"
-	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
-	@rm -f $(OBJS) myos myos.iso
-	@rm -f $(shell find lib/ -name "*.lo" -o -name "*.a" 2>/dev/null)
-	@rm -rf isodir
+# ─────────────────────────────────────────────────────────────
+# liborion build rules
+# ─────────────────────────────────────────────────────────────
 
+# .asm -> .lo  (userspace asm — same format, different output name)
+lib/liborion/syscall.lo: lib/liborion/syscall.asm
+	@$(ASM) $(ASMFLAGS) $< -o $@
+
+# .c -> .lo  (userspace C flags — no kernel headers)
+lib/liborion/%.lo: lib/liborion/%.c
+	@$(CC) $(UFLAGS) -c $< -o $@
+
+# archive all .lo into liborion.a
+$(LIBORION): $(LIBORION_OBJS)
+	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+	@echo "┃                       Building liborion                           ┃"
+	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+	@$(AR) rcs $@ $^
+
+# ─────────────────────────────────────────────────────────────
+# Kernel build rules (unchanged)
+# ─────────────────────────────────────────────────────────────
 kernel/arch/x86/boot.o:    kernel/arch/x86/boot.asm
 	@$(ASM) $(ASMFLAGS) $< -o $@
 
@@ -87,7 +128,10 @@ kernel/arch/x86/irq_c.o: kernel/arch/x86/irq.c
 %.o: %.c
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-myos: $(OBJS)
+# ─────────────────────────────────────────────────────────────
+# Top-level targets
+# ─────────────────────────────────────────────────────────────
+myos: $(OBJS) $(LIBORION)
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
 	@echo "┃                          Linking Kernel                           ┃"
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
@@ -101,6 +145,13 @@ myos.iso: myos
 	@cp myos          $(ISODIR)/myos
 	@cp boot/grub.cfg $(ISODIR)/grub/grub.cfg
 	@$(GRUB) -o myos.iso isodir
+
+clean:
+	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+	@echo "┃                            MAKE CLEAN                             ┃"
+	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+	@rm -f $(OBJS) $(LIBORION_OBJS) $(LIBORION) myos myos.iso
+	@rm -rf isodir
 
 run:
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
