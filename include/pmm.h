@@ -33,10 +33,13 @@ void pmm_free_frame(uint32_t phys_addr);
 void print_uint32_hex(uint32_t v);
 void print_uint32_dec(uint32_t v);
 
-
 // tests
 uint32_t pmm_get_total_frames(void);
 uint32_t pmm_get_used_frames(void);
 uint32_t pmm_get_free_frames(void);
+
+// allocate N physically contiguous frames: for virtio descriptor rings
+uint32_t pmm_alloc_contiguous(uint32_t n);
+void     pmm_free_contiguous(uint32_t phys_addr, uint32_t n);
 
 #endif
