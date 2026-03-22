@@ -52,6 +52,8 @@ C_OBJS := \
 	kernel/drivers/vga.o        \
 	kernel/drivers/timer.o      \
 	kernel/drivers/keyboard.o   \
+	kernel/drivers/pci.o        \
+	kernel/drivers/virtio_net.o \
 	kernel/panic.o              \
 	kernel/kernel.o             \
 	lib/libk/string.o           \

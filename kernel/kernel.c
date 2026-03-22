@@ -23,6 +23,8 @@
 #include "sched.h"
 #include "syscall.h"
 #include "shell.h"
+#include "pci.h"
+#include "virtio_net.h"
 
 #if defined(__linux__)
     #error "Must be compiled with a cross-compiler"
@@ -66,6 +68,9 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
 
     timer_init(100);        // 10 ms = 100hz
     keyboard_init();
+
+    pci_init();
+    virtio_net_init();
 
     pcb_t *idle = proc_create("idle", PROC_PRIO_IDLE);
     kassert(idle != 0);
