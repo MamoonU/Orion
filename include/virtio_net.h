@@ -76,9 +76,9 @@ typedef struct __attribute__((packed)) {
 typedef void (*virtio_net_rx_cb_t)(const void *data, uint32_t len);     // packet arrives -> driver calls this -> pass raw ethernet frame
 
 // public API
-int  virtio_net_init(void);
-int  virtio_net_send(const void *data, uint32_t len);
-void virtio_net_get_mac(uint8_t mac[6]);
-void virtio_net_set_rx_callback(virtio_net_rx_cb_t cb);
+int  virtio_net_init(void);                                             // initialise: find dev -> enable -> setup queues -> negotiate features
+int  virtio_net_send(const void *data, uint32_t len);                   // send packets
+void virtio_net_get_mac(uint8_t mac[6]);                                // read MAC from config space
+void virtio_net_set_rx_callback(virtio_net_rx_cb_t cb);                 // register packet handler
 
 #endif
