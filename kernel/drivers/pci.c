@@ -9,7 +9,6 @@ static uint32_t pci_address(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offs
     return (1u << 31) | ((uint32_t)bus << 16) | ((uint32_t)(dev & 0x1Fu) << 11) | ((uint32_t)(func & 0x07u) << 8) | ((uint32_t)(offset) & 0xFCu);
 }
 
-
 uint32_t pci_read32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset) {
     outl(PCI_CONFIG_ADDR, pci_address(bus, dev, func, offset));
     return inl(PCI_CONFIG_DATA);
