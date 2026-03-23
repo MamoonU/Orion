@@ -1,4 +1,4 @@
-// lwipopts.h - lwIP 2.1.3 configuration for Orion OS
+// port/lwipopts.h - lwIP 2.1.3 configuration for Orion OS
 // Bare-metal, single-core, no POSIX.
 
 #ifndef LWIPOPTS_H
