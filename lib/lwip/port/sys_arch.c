@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+unsigned int lwip_port_rand(void);
+
 // errno
 int errno = 0;
 
@@ -14,15 +16,11 @@ u32_t sys_now(void) {
     return timer_get_ticks() * 10u;             // return elapsed # ms since boot
 }
 
-// memmove
-void *memmove(void *dst, const void *src, size_t n) {
-    uint8_t       *d = (uint8_t *)dst;          // destination
-    const uint8_t *s = (const uint8_t *)src;    // source
-    if (d < s) {
-        while (n--) *d++ = *s++;                // forward copy
-    } else {
-        d += n; s += n;
-        while (n--) *--d = *--s;                // backward copy
-    }
-    return dst;
+// LWIP_RAND() implementation - simple LCG PRNG
+// Not cryptographic: sufficient for DNS transaction ID randomisation
+unsigned int lwip_port_rand(void) {
+    static u32_t seed = 0;
+    if (!seed) seed = timer_get_ticks() ^ 0xDEADBEEFu;
+    seed = seed * 1664525u + 1013904223u;       // Knuth LCG
+    return seed;
 }

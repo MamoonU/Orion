@@ -13,6 +13,9 @@ static inline int islower (int c) { return c>='a'&&c<='z'; }                    
 static inline int isspace (int c) {                                                 // space, \n, \r, \t ...etc check
     return c==' '||c=='\t'||c=='\n'||c=='\r'||c=='\f'||c=='\v';
 }
+static inline int isxdigit(int c) {
+    return (c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F');
+}
 static inline int tolower (int c) { return isupper(c) ? c+32 : c; }                 // case conversion -> lower
 static inline int toupper (int c) { return islower(c) ? c-32 : c; }                 // case conversion -> upper
 

@@ -50,6 +50,16 @@
 #define DNS_MAX_SERVERS             2               // 2 DNS servers
 #define DNS_TABLE_SIZE              8               // 8 entries per server
 
+// simple PRNG for DNS transaction IDs
+#ifdef __cplusplus
+extern "C" {
+#endif
+unsigned int lwip_port_rand(void);
+#ifdef __cplusplus
+}
+#endif
+#define LWIP_RAND()                 lwip_port_rand()
+
 // network interface
 #define LWIP_NETIF_STATUS_CALLBACK  1               // status changes (up/down)
 #define LWIP_NETIF_LINK_CALLBACK    1               // link changes
@@ -74,5 +84,7 @@
 
 // socket layer
 #define LWIP_POSIX_SOCKETS_IO_NAMES 0               // disabled
+#define LWIP_SOCKET                 0               // no BSD socket API
+#define LWIP_NETCONN                0               // no sequential (netconn) API
 
 #endif

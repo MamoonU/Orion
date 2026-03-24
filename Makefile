@@ -14,6 +14,13 @@ UFLAGS   := -ffreestanding -O2 -Wall -Wextra -I lib/liborion \
 
 ASMFLAGS := -f elf32
 LDFLAGS  := -T linker.ld -ffreestanding -O2 -nostdlib
+LWIP_CFLAGS := -ffreestanding -O2 \
+               -I include \
+               -I lib/lwip/include \
+               -I lib/lwip/port \
+               -Wno-unused-function \
+               -Wno-unused-parameter \
+               -Wno-address
 
 # ─────────────────────────────────────────────────────────────
 # Kernel objects
@@ -58,6 +65,43 @@ C_OBJS := \
 	kernel/kernel.o             \
 	lib/libk/string.o           \
 	lib/libk/kprintf.o
+
+LWIP_CORE_OBJS := \
+	lib/lwip/src/core/init.o          \
+	lib/lwip/src/core/def.o           \
+	lib/lwip/src/core/dns.o           \
+	lib/lwip/src/core/inet_chksum.o   \
+	lib/lwip/src/core/ip.o            \
+	lib/lwip/src/core/mem.o           \
+	lib/lwip/src/core/memp.o          \
+	lib/lwip/src/core/netif.o         \
+	lib/lwip/src/core/pbuf.o          \
+	lib/lwip/src/core/raw.o           \
+	lib/lwip/src/core/stats.o         \
+	lib/lwip/src/core/sys.o           \
+	lib/lwip/src/core/altcp.o         \
+	lib/lwip/src/core/altcp_alloc.o   \
+	lib/lwip/src/core/altcp_tcp.o     \
+	lib/lwip/src/core/tcp.o           \
+	lib/lwip/src/core/tcp_in.o        \
+	lib/lwip/src/core/tcp_out.o       \
+	lib/lwip/src/core/timeouts.o      \
+	lib/lwip/src/core/udp.o           \
+	lib/lwip/src/core/ipv4/autoip.o   \
+	lib/lwip/src/core/ipv4/dhcp.o     \
+	lib/lwip/src/core/ipv4/etharp.o   \
+	lib/lwip/src/core/ipv4/icmp.o     \
+	lib/lwip/src/core/ipv4/igmp.o     \
+	lib/lwip/src/core/ipv4/ip4_addr.o \
+	lib/lwip/src/core/ipv4/ip4.o      \
+	lib/lwip/src/core/ipv4/ip4_frag.o \
+	lib/lwip/src/netif/ethernet.o
+
+LWIP_PORT_OBJS := \
+	lib/lwip/port/sys_arch.o    \
+	lib/lwip/port/orion_netif.o
+
+LWIP_OBJS := $(LWIP_CORE_OBJS) $(LWIP_PORT_OBJS)
 
 OBJS := $(ASM_OBJS) $(C_OBJS)
 
@@ -127,17 +171,23 @@ kernel/arch/x86/syscall.o: kernel/arch/x86/syscall.asm
 kernel/arch/x86/irq_c.o: kernel/arch/x86/irq.c
 	@$(CC) $(CFLAGS) -c $< -o $@
 
+lib/lwip/src/%.o: lib/lwip/src/%.c
+	@$(CC) $(LWIP_CFLAGS) -c $< -o $@
+
+lib/lwip/port/%.o: lib/lwip/port/%.c
+	@$(CC) $(LWIP_CFLAGS) -c $< -o $@
+
 %.o: %.c
 	@$(CC) $(CFLAGS) -c $< -o $@
 
 # ─────────────────────────────────────────────────────────────
 # Top-level targets
 # ─────────────────────────────────────────────────────────────
-myos: $(OBJS) $(LIBORION)
+myos: $(OBJS) $(LIBORION) $(LWIP_OBJS)
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
 	@echo "┃                          Linking Kernel                           ┃"
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
-	@$(CC) $(LDFLAGS) $(OBJS) -o myos -lgcc
+	@$(CC) $(LDFLAGS) $(OBJS) $(LWIP_OBJS) -o myos -lgcc
 
 myos.iso: myos
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
@@ -152,7 +202,7 @@ clean:
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
 	@echo "┃                            MAKE CLEAN                             ┃"
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
-	@rm -f $(OBJS) $(LIBORION_OBJS) $(LIBORION) myos myos.iso
+	@rm -f $(OBJS) $(LIBORION_OBJS) $(LIBORION) $(LWIP_OBJS) myos myos.iso
 	@rm -rf isodir
 
 run:
