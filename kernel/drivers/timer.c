@@ -5,6 +5,11 @@
 #include "serial.h"
 
 static volatile uint32_t tick_count = 0;
+static timer_tick_cb_t   tick_cb    = 0;
+
+void timer_register_tick_cb(timer_tick_cb_t cb) {
+    tick_cb = cb;
+}
 
 // timer fires = timer_handler()
 void timer_handler(regs_t *r) {
