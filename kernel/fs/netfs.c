@@ -309,6 +309,154 @@ static void udp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
     wake_pid(&c->blocked_reader);                                           // wake reader
 }
 
+// allocate new TCP connection 
+static int tcp_clone_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+
+    (void)v;
+    (void)off;
+
+    uint32_t slot = ~0u;
+    for (uint32_t i = 0; i < NETFS_TCP_MAX; i++) {
+        if (tcp_conns[i].state == CONN_FREE) {                          // find free slot
+            slot = i;
+            break;
+        }
+    }
+    if (slot == ~0u) return -1;
+
+    netfs_tcp_t *c = &tcp_conns[slot];
+    c->pcb = tcp_new();                                                 // create lwIP PCB
+    if (!c->pcb) return -1;
+
+    c->rx_head = 0;                                                     // initialise state
+    c->rx_count = 0;
+    c->blocked_reader    = NETFS_NO_WAITER;
+    c->blocked_connector = NETFS_NO_WAITER;
+    c->blocked_acceptor  = NETFS_NO_WAITER;
+    c->accept_head = 0;
+    c->accept_count = 0;
+    c->conn_err = 0;
+    ip4_addr_set_any(&c->local_ip);
+    ip4_addr_set_any(&c->remote_ip);
+    c->local_port = 0; c->remote_port = 0;
+
+    tcp_arg (c->pcb, c);                                                // register callbacks
+    tcp_recv(c->pcb, tcp_recv_cb);
+    tcp_err (c->pcb, tcp_err_cb);
+
+    c->state = CONN_ALLOCATED;
+
+    char tmp[16];
+    uint_to_str(slot, tmp, sizeof(tmp));                                // return slot # as string
+    uint32_t n = (uint32_t)strlen(tmp);
+    if (n > len) n = len;
+    memcpy(buf, tmp, n);
+    return (int)n;
+}
+
+// control plane: TCP operations occur -> writing commands
+static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off) {
+
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_tcp_t  *c = &tcp_conns[f->slot];
+    if (c->state == CONN_FREE) return -1;
+
+    char cmd[128];
+    uint32_t n = (len < sizeof(cmd)-1) ? len : sizeof(cmd)-1;
+    memcpy(cmd, buf, n); cmd[n] = '\0';
+    trim_ws(cmd);
+
+    if (strncmp(cmd, "connect ", 8) == 0) {                                         // 1. connect ip!port
+
+        if (c->state != CONN_ALLOCATED) return -1;
+        ip4_addr_t rip; uint16_t rport;
+        if (parse_addr_port(cmd + 8, &rip, &rport) < 0) return -1;                  // parse address port
+
+        c->remote_ip   = rip;                                                       // save target
+        c->remote_port = rport;
+        c->state       = CONN_CONNECTING;
+
+        err_t e = tcp_connect(c->pcb, &rip, rport, tcp_connected_cb);               // call lwIP
+        if (e != ERR_OK) { c->state = CONN_ALLOCATED; return -1; }
+
+        block_self(&c->blocked_connector);                                          // block process
+        return (c->state == CONN_ESTABLISHED) ? (int)len : -1;
+
+    } else if (strncmp(cmd, "announce ", 9) == 0) {                                 // 2. announce *!port
+
+        if (c->state != CONN_ALLOCATED) return -1;
+        ip4_addr_t lip; uint16_t lport;
+        if (parse_addr_port(cmd + 9, &lip, &lport) < 0) return -1;                  // parse address port
+
+        c->local_ip   = lip;                                                        // save target
+        c->local_port = lport;
+
+        tcp_bind(c->pcb, &lip, lport);                                              // bind -> IP/port
+        struct tcp_pcb *lpcb = tcp_listen(c->pcb);                                  // convert to listening pcb
+        if (!lpcb) { c->state = CONN_FREE; c->pcb = 0; return -1; }
+        c->pcb = lpcb;
+        tcp_arg   (c->pcb, c);
+        tcp_accept(c->pcb, tcp_accept_cb);                                          // register accept callback
+        c->state = CONN_LISTEN;                                                     // set
+        return (int)len;
+
+    } else if (strcmp(cmd, "accept") == 0) {                                        // 3. accept
+
+        if (c->state != CONN_LISTEN) return -1;
+
+        while (c->accept_count == 0 && c->state == CONN_LISTEN) {                   // wait: tcp_accept_cb enqueues new PCB
+            block_self(&c->blocked_acceptor);
+        }
+        if (c->accept_count == 0) return -1;
+
+        uint32_t nslot = ~0u;                                                       // find free slot for the new connection
+        for (uint32_t i = 0; i < NETFS_TCP_MAX; i++) {
+            if (tcp_conns[i].state == CONN_FREE) { nslot = i; break; }
+        }
+        if (nslot == ~0u) return -1;
+
+        netfs_tcp_t *nc = &tcp_conns[nslot];
+        nc->pcb = c->accept_q[c->accept_head];                                      // transfer PCB
+        c->accept_head  = (uint8_t)((c->accept_head + 1) & (NETFS_ACCEPT_Q - 1));
+        c->accept_count--;
+
+        nc->rx_head = 0;
+        nc->rx_count = 0;
+        nc->blocked_reader    = NETFS_NO_WAITER;
+        nc->blocked_connector = NETFS_NO_WAITER;
+        nc->blocked_acceptor  = NETFS_NO_WAITER;
+        nc->accept_head = 0;
+        nc->accept_count = 0;
+        nc->conn_err = 0;
+        nc->local_port  = nc->pcb->local_port;
+        nc->remote_port = nc->pcb->remote_port;
+        nc->local_ip    = nc->pcb->local_ip;
+        nc->remote_ip   = nc->pcb->remote_ip;
+        nc->state       = CONN_ESTABLISHED;
+
+        tcp_arg (nc->pcb, nc);
+        tcp_recv(nc->pcb, tcp_recv_cb);
+        tcp_err (nc->pcb, tcp_err_cb);
+
+        kprintf("NETFS: accept: new TCP connection in slot %u\n", nslot);
+        return (int)len;
+
+    } else if (strcmp(cmd, "close") == 0) {                                         // 4. close
+
+        if (c->pcb) {                                                               // graceful close & abort
+            if (c->state == CONN_ESTABLISHED) tcp_close(c->pcb);
+            else                              tcp_abort(c->pcb);
+            c->pcb = 0;
+        }
+
+        c->state = CONN_FREE;                                                       // free
+        wake_pid(&c->blocked_reader);                                               // wake reader
+        return (int)len;
+    }
+    return -1;
+}
+
 
 
 
