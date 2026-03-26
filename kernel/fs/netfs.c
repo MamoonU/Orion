@@ -457,7 +457,90 @@ static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off
     return -1;
 }
 
+// implement blocking read() -> TCP socket
+static int tcp_data_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
 
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_tcp_t  *c = &tcp_conns[f->slot];
+
+    if (c->state == CONN_FREE || c->state == CONN_ALLOCATED) return -1;     // reject invalid states
+
+    while (c->rx_count == 0) {                                              // block if no data
+        if (c->state == CONN_CLOSING || c->state == CONN_FREE) return 0;    // EOF
+        block_self(&c->blocked_reader);
+    }
+
+    uint32_t n = (len < c->rx_count) ? len : c->rx_count;
+    uint8_t *dst = (uint8_t *)buf;
+
+    for (uint32_t i = 0; i < n; i++) {                                      // copy from buffer
+        dst[i] = c->rx_buf[c->rx_head];
+        c->rx_head = (c->rx_head + 1) % NETFS_RX_BUF;
+    }
+
+    c->rx_count -= n;                                                       // update count
+    return (int)n;
+}
+
+// send data over TCP
+static int tcp_data_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off) {
+
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_tcp_t  *c = &tcp_conns[f->slot];
+    if (c->state != CONN_ESTABLISHED) return -1;                            // check state
+
+    err_t e = tcp_write(c->pcb, buf, (u16_t)len, TCP_WRITE_FLAG_COPY);
+    if (e != ERR_OK) return -1;
+    tcp_output(c->pcb);                                                     // flush
+    return (int)len;
+}
+
+// return human readable state
+static int tcp_status_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    const char *s;
+    switch (tcp_conns[f->slot].state) {
+        case CONN_FREE:        s = "Free\n";        break;
+        case CONN_ALLOCATED:   s = "Allocated\n";   break;
+        case CONN_CONNECTING:  s = "Connecting\n";  break;
+        case CONN_ESTABLISHED: s = "Established\n"; break;
+        case CONN_LISTEN:      s = "Listen\n";      break;
+        case CONN_CLOSING:     s = "Closing\n";     break;
+        default:               s = "Unknown\n";     break;
+    }
+    uint32_t n = (uint32_t)strlen(s);
+    if (n > len) n = len;
+    memcpy(buf, s, n);
+    return (int)n;
+}
+
+// read/return local IP
+static int tcp_local_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_tcp_t  *c = &tcp_conns[f->slot];
+    char tmp[48];
+    uint32_t n = format_ap(&c->local_ip, c->local_port, tmp, sizeof(tmp));
+    if (n > len) n = len;
+    memcpy(buf, tmp, n);
+    return (int)n;
+}
+
+// read/retrun remote IP
+static int tcp_remote_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_tcp_t  *c = &tcp_conns[f->slot];
+    char tmp[48];
+    uint32_t n = format_ap(&c->remote_ip, c->remote_port, tmp, sizeof(tmp));
+    if (n > len) n = len;
+    memcpy(buf, tmp, n);
+    return (int)n;
+}
 
 
 
