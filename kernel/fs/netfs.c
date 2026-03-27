@@ -542,6 +542,158 @@ static int tcp_remote_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
     return (int)n;
 }
 
+// allocate new UDP slot
+static int udp_clone_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
 
+    (void)v; (void)off;
+    uint32_t slot = ~0u;
+    for (uint32_t i = 0; i < NETFS_UDP_MAX; i++) {                      // find free slot
+        if (udp_conns[i].state == CONN_FREE) { slot = i; break; }
+    }
+    if (slot == ~0u) return -1;
 
+    netfs_udp_t *c = &udp_conns[slot];
+    c->pcb = udp_new();                                                 // create UDP PCB
+    if (!c->pcb) return -1;
 
+    c->rx_head = 0; c->rx_count = 0;                                    // initialise state
+    c->blocked_reader = NETFS_NO_WAITER;
+
+    ip4_addr_set_any(&c->local_ip);                                     // set default addresses
+    ip4_addr_set_any(&c->remote_ip);
+
+    c->local_port = 0; c->remote_port = 0;
+    c->state = CONN_ALLOCATED;
+    udp_recv(c->pcb, udp_recv_cb, c);                                   // register recieve callback
+
+    char tmp[16]; uint_to_str(slot, tmp, sizeof(tmp));
+    uint32_t n = (uint32_t)strlen(tmp);
+    if (n > len) n = len;
+    memcpy(buf, tmp, n);
+    return (int)n;
+}
+
+// control plane: UDP operations occur -> writing commands
+static int udp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off) {
+
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_udp_t  *c = &udp_conns[f->slot];
+    if (c->state == CONN_FREE) return -1;
+
+    char cmd[128];
+    uint32_t n = (len < sizeof(cmd)-1) ? len : sizeof(cmd)-1;
+    memcpy(cmd, buf, n); cmd[n] = '\0';
+    trim_ws(cmd);
+
+    if (strncmp(cmd, "connect ", 8) == 0) {                             // 1. connect
+
+        ip4_addr_t rip; uint16_t rport;
+        if (parse_addr_port(cmd + 8, &rip, &rport) < 0) return -1;
+        c->remote_ip = rip; c->remote_port = rport;
+        udp_connect(c->pcb, &rip, rport);
+        c->state = CONN_ESTABLISHED;
+        return (int)len;
+
+    } else if (strncmp(cmd, "announce ", 9) == 0) {                     // 2. announce (bind)
+
+        ip4_addr_t lip; uint16_t lport;
+        if (parse_addr_port(cmd + 9, &lip, &lport) < 0) return -1;
+        c->local_ip = lip; c->local_port = lport;
+        err_t e = udp_bind(c->pcb, &lip, lport);
+        if (e != ERR_OK) return -1;
+        c->state = CONN_ESTABLISHED;
+        return (int)len;
+
+    } else if (strcmp(cmd, "close") == 0) {                             // 3. close
+
+        if (c->pcb) { udp_remove(c->pcb); c->pcb = 0; }
+        c->state = CONN_FREE;
+        wake_pid(&c->blocked_reader);
+        return (int)len;
+    }
+    return -1;
+}
+
+// blocking read() from UDP recieve buffer
+static int udp_data_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_udp_t  *c = &udp_conns[f->slot];
+    if (c->state == CONN_FREE || c->state == CONN_ALLOCATED) return -1;     // reject invalid states
+
+    while (c->rx_count == 0) {                                              // block if no data
+        if (c->state == CONN_FREE) return 0;
+        block_self(&c->blocked_reader);
+    }
+
+    uint32_t n = (len < c->rx_count) ? len : c->rx_count;
+    uint8_t *dst = (uint8_t *)buf;
+
+    for (uint32_t i = 0; i < n; i++) {
+        dst[i] = c->rx_buf[c->rx_head];                                     // copy from buffer
+        c->rx_head = (c->rx_head + 1) % NETFS_RX_BUF;
+    }
+    c->rx_count -= n;
+    return (int)n;
+}
+
+// send UDP packet
+static int udp_data_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off) {
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_udp_t  *c = &udp_conns[f->slot];
+    if (c->state != CONN_ESTABLISHED) return -1;
+
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, (u16_t)len, PBUF_RAM);
+    if (!p) return -1;
+    memcpy(p->payload, buf, len);
+
+    err_t e;
+    if (ip4_addr_isany_val(c->remote_ip))
+        e = udp_sendto(c->pcb, p, &c->remote_ip, c->remote_port);
+    else
+        e = udp_send(c->pcb, p);
+
+    pbuf_free(p);
+    return (e == ERR_OK) ? (int)len : -1;
+}
+
+static int udp_status_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    const char *s;
+    switch (udp_conns[f->slot].state) {
+        case CONN_FREE:        s = "Free\n";        break;
+        case CONN_ALLOCATED:   s = "Allocated\n";   break;
+        case CONN_ESTABLISHED: s = "Established\n"; break;
+        default:               s = "Unknown\n";     break;
+    }
+    uint32_t n = (uint32_t)strlen(s);
+    if (n > len) n = len;
+    memcpy(buf, s, n);
+    return (int)n;
+}
+
+static int udp_local_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_udp_t  *c = &udp_conns[f->slot];
+    char tmp[48];
+    uint32_t n = format_ap(&c->local_ip, c->local_port, tmp, sizeof(tmp));
+    if (n > len) n = len;
+    memcpy(buf, tmp, n);
+    return (int)n;
+}
+
+static int udp_remote_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+    (void)off;
+    netfs_file_t *f = (netfs_file_t *)v->data;
+    netfs_udp_t  *c = &udp_conns[f->slot];
+    char tmp[48];
+    uint32_t n = format_ap(&c->remote_ip, c->remote_port, tmp, sizeof(tmp));
+    if (n > len) n = len;
+    memcpy(buf, tmp, n);
+    return (int)n;
+}
