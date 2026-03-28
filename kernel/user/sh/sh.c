@@ -24,8 +24,6 @@ static char sh_readchar(void) {
     return c;
 }
 
-
-
 // line editor: read until newline, echoes characters, handle backspaces
 static uint32_t sh_readline(char *buf, uint32_t max) {
 
@@ -83,5 +81,188 @@ static int sh_tokenise(char *line, char **argv, int argv_max) {
     return argc;                                            // return arg count
 }
 
+// prompt ( orion: $ )
+static void sh_print_prompt(void) {
+
+    char cwd[256];
+
+    if (getcwd(cwd, sizeof(cwd)) < 0) {         // return current working directory
+        strcpy(cwd, "/");
+    }
+
+    sh_write("\norion:");
+    sh_write(cwd);
+    sh_write(" $ ");                            // orion:/net/tcp $
+}
+
+// builtins
+
+// list builtin commands with descriptions
+static void builtin_help(void) {
+    sh_write("\nOrion Shell [ring-3] built-in commands:\n");
+    sh_write("  help               show this message\n");
+    sh_write("  echo [args...]     print arguments\n");
+    sh_write("  pwd                print working directory\n");
+    sh_write("  cd <path>          change directory\n");
+    sh_write("  ls [path]          list directory\n");
+    sh_write("  cat <file>         print file contents\n");
+    sh_write("  clear              clear screen\n");
+    sh_write("  ps                 list processes (stub)\n");
+    sh_write("  bind [-b|-a] <src> <dst>  bind src into namespace at dst\n");
+    sh_write("                            -b = before (union prepend)\n");
+    sh_write("                            -a = after  (union append)\n");
+    sh_write("                            default = replace\n");
+    sh_write("  unbind <dst>              remove all bindings at dst\n");
+    sh_write("  nsdump                    dump this process namespace\n");
+    sh_write("  exit [code]               exit shell\n");
+}
+
+// echo [args...] = print arguments
+static void builtin_echo(int argc, char **argv) {
+
+    for (int i = 1; i < argc; i++) {                    // skip argv[0] (command name)
+        if (i > 1) sh_putchar(' ');                     // insert space between args
+        sh_write(argv[i]);                              // write args
+    }
+
+    sh_putchar('\n');
+}
+
+// pwd = print working directory
+static void builtin_pwd(void) {
+    
+    char cwd[256];
+    if (getcwd(cwd, sizeof(cwd)) >= 0) {                // return current working directory
+        sh_write(cwd);
+        sh_putchar('\n');
+    } else {
+        sh_write("pwd: failed\n");                      // getcwd() failed
+    }
+}
+
+// cd <path> = change directory
+static void builtin_cd(int argc, char **argv) {
+
+    const char *target = (argc >= 2) ? argv[1] : "/";   // no args = go to root "/"
+    if (chdir(target) < 0) {
+        sh_write("cd: no such directory: ");
+        sh_write(target);
+        sh_putchar('\n');
+    }
+}
+
+// ls [path] = list directory
+static void builtin_ls(int argc, char **argv) {
+
+    char cwd[256];
+    getcwd(cwd, sizeof(cwd));
+    const char *target = (argc >= 2) ? argv[1] : cwd;   // resolve target: no args = list cwd
+
+    int fd = open(target, O_RDONLY);                    // open the directory as a file: vfs_open on dir gives file_t that sys_readdir can iterate
+    if (fd < 0) {
+        sh_write("ls: cannot open: ");
+        sh_write(target);
+        sh_putchar('\n');
+        return;
+    }
+
+    char     name_buf[128];                             // output name buffer
+    uint32_t index = 0;                                 // entry number
+    int      count = 0;
+
+    while (readdir(fd, index, name_buf, (uint32_t)sizeof(name_buf)) == 0) {     // iterate entries
+        sh_write("  ");
+        sh_write(name_buf);
+        sh_putchar('\n');
+        index++;
+        count++;
+    }
+
+    if (count == 0) sh_write("  (empty)\n");            // empty directory handling
+    close(fd);
+}
+
+// cat <file> = print file contents
+static void builtin_cat(int argc, char **argv) {
+
+    if (argc < 2) {
+        sh_write("usage: cat <file>\n");
+        return;
+    }
+
+    int fd = open(argv[1], O_RDONLY);                   // open file
+    if (fd < 0) {
+        sh_write("cat: cannot open: ");
+        sh_write(argv[1]);
+        sh_putchar('\n');
+        return;
+    }
+
+    char buf[256];
+    int  n;
+
+    while ((n = read(fd, buf, (uint32_t)(sizeof(buf) - 1))) > 0) {      // read chunks from file loop
+        buf[n] = '\0';
+        sh_write(buf);                                                  // print
+    }
+
+    sh_putchar('\n');
+    close(fd);
+}
+
+// clear = print 25 new lines
+static void builtin_clear(void) {
+    for (int i = 0; i < 25; i++) sh_putchar('\n');
+}
+
+// ps = list processes: !!!!!!!no /proc filesystem yet!!!!!!!!
+static void builtin_ps(void) {
+    sh_write("ps: /proc not implemented.\n");
+}
+
+// bind [-b|-a] <src> <dst> = bind src into namespace at dst
+static void builtin_bind(int argc, char **argv) {
+
+    if (argc < 3) {
+        sh_write("usage: bind [-b|-a] <src> <dst>\n");
+        return;
+    }
+
+    uint8_t     flags   = NS_BIND_REPLACE;                      // NS_BIND_REPLACE = default
+    const char *src_arg = argv[1];
+    const char *dst_arg = argv[2];
+
+    if (argc >= 4 && argv[1][0] == '-') {                       // detect flags
+
+        if      (argv[1][1] == 'b') flags = NS_BIND_BEFORE;     // NS_BIND_BEFORE = (-b)
+        else if (argv[1][1] == 'a') flags = NS_BIND_AFTER;      // NS_BIND_AFTER = (-a)
+        else {
+            sh_write("bind: unknown flag (use -b or -a)\n");
+            return;
+        }
+
+        src_arg = argv[2];
+        dst_arg = argv[3];
+    }
+
+    if (bind(src_arg, dst_arg, flags) < 0) {                    // syscall
+        sh_write("bind: failed (namespace table full?)\n");
+    }
+}
+
+// unbind <dst>
+static void builtin_unbind(int argc, char **argv) {
+
+    if (argc < 2) {
+        sh_write("usage: unbind <dst>\n");
+        return;
+    }
+
+    if (unbind(argv[1]) < 0) {                      // syscall: remove all bindings at path(dst)
+        sh_write("unbind: no binding at: ");
+        sh_write(argv[1]);
+        sh_putchar('\n');
+    }
+}
 
 
