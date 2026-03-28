@@ -266,3 +266,103 @@ static void builtin_unbind(int argc, char **argv) {
 }
 
 
+static const char *g_exec_path = 0;             // shared variable between parent & child: set by sh_exec before fork
+
+// runs in child process
+static void exec_child(void) {
+    execve(g_exec_path);                        // replace child image with ELF from /bin/<cmd>
+    sh_write("exec: execve failed\n");
+    _exit(127);
+}
+
+// execute external = main launcher
+static void sh_exec_external(int argc, char **argv) {
+
+    (void)argc;
+
+    char path[256];
+    snprintf(path, sizeof(path), "/bin/%s", argv[0]);   // build /bin/<cmd> path
+
+    int test_fd = open(path, O_RDONLY);                 // check file existence: avoid useless fork
+    if (test_fd < 0) {
+        sh_write("sh: '");
+        sh_write(argv[0]);
+        sh_write("': not found (looked in /bin/)\n");
+        return;
+    }
+    close(test_fd);
+
+    g_exec_path = path;                             // set shared path before fork
+
+    int child_pid = fork((uint32_t)exec_child);     // fork: child runs exec_child()
+    if (child_pid < 0) {
+        sh_write("sh: fork failed\n");
+        g_exec_path = 0;
+        return;
+    }
+
+    int exit_code = 0;
+    wait(child_pid, &exit_code);                    // block until child finishes
+
+    g_exec_path = 0;
+}
+
+// command dispatcher
+static void sh_dispatch(int argc, char **argv) {
+
+    if (argc == 0) return;
+
+    if      (strcmp(argv[0], "help"   ) == 0) builtin_help();
+    else if (strcmp(argv[0], "echo"   ) == 0) builtin_echo(argc, argv);
+    else if (strcmp(argv[0], "pwd"    ) == 0) builtin_pwd();
+    else if (strcmp(argv[0], "cd"     ) == 0) builtin_cd(argc, argv);
+    else if (strcmp(argv[0], "ls"     ) == 0) builtin_ls(argc, argv);
+    else if (strcmp(argv[0], "cat"    ) == 0) builtin_cat(argc, argv);
+    else if (strcmp(argv[0], "clear"  ) == 0) builtin_clear();
+    else if (strcmp(argv[0], "ps"     ) == 0) builtin_ps();
+    else if (strcmp(argv[0], "bind"   ) == 0) builtin_bind(argc, argv);
+    else if (strcmp(argv[0], "unbind" ) == 0) builtin_unbind(argc, argv);
+    else if (strcmp(argv[0], "nsdump" ) == 0) nsdump();
+    else if (strcmp(argv[0], "exit"   ) == 0) {
+        int code = (argc >= 2) ? atoi(argv[1]) : 0;
+        _exit(code);                                            // terminate shell
+    }
+    else sh_exec_external(argc, argv);                          // fallback: unknown = /bin/<cmd>
+}
+
+// entry point
+int main(int argc, char **argv) {
+
+    (void)argc;
+    (void)argv;
+
+    signal(SIGINT, SIG_IGN);                                    // shell ignores SIGINT: only foreground children die on Ctrl+C
+
+    sh_write(
+    "\n"
+    "_______/\\\\\\\\\\______________________________________________________        \n"
+    " _____/\\\\\\///\\\\\\____________________________________________________       \n"
+    "  ___/\\\\\\/__\\///\\\\\\_________________/\\\\\\_____________________________      \n"
+    "   __/\\\\\\______\\//\\\\\\__/\\\\/\\\\\\\\\\\\\\__\\///______/\\\\\\\\\\_____/\\\\/\\\\\\\\\\\\___     \n"
+    "    _\\/\\\\\\_______\\/\\\\\\_\\/\\\\\\/////\\\\\\__/\\\\\\___/\\\\\\///\\\\\\__\\/\\\\\\////\\\\\\__    \n"
+    "     _\\//\\\\\\______/\\\\\\__\\/\\\\\\___\\///__\\/\\\\\\__/\\\\\\__\\//\\\\\\_\\/\\\\\\__\\//\\\\\\_   \n"
+    "      __\\///\\\\\\__/\\\\\\____\\/\\\\\\_________\\/\\\\\\_\\//\\\\\\__/\\\\\\__\\/\\\\\\___\\/\\\\\\_  \n"
+    "       ____\\///\\\\\\\\\\/_____\\/\\\\\\_________\\/\\\\\\__\\///\\\\\\\\\\/___\\/\\\\\\___\\/\\\\\\_ \n"
+    "        ______\\/////_______\\///__________\\///_____\\/////_____\\///____\\///__\n"
+    "\n"
+    "Orion Shell [ring-3] - type 'help' for commands\n"
+    );
+
+    char  line[SH_LINE_MAX];                                    // line input buffer max = 256
+    char *argv_buf[SH_ARGV_MAX];                                // args max              = 16
+
+    while (1) {
+        sh_print_prompt();                                      // print prompt
+        sh_readline(line, SH_LINE_MAX);                         // read input
+        int ac = sh_tokenise(line, argv_buf, SH_ARGV_MAX);      // tokenise input
+        if (ac == 0) continue;                                  // skip empty
+        sh_dispatch(ac, argv_buf);                              // execute
+    }
+    return 0;                                                   // unreachable: _exit() called on "exit" command
+}
+ 
