@@ -701,7 +701,7 @@ static int udp_remote_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
     return (int)n;
 }
 
-// /net/ififc/status: return current network interface as text
+// /net/ipifc/status: return current network interface as text
 static int ipifc_status_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
 
     (void)v; (void)off;
@@ -740,7 +740,7 @@ static int ipifc_status_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) 
     return (int)n;
 }
 
-// /net/ififc/ctl: manually configure IP settings
+// /net/ipifc/ctl: manually configure IP settings
 static int ipifc_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off) {
 
     (void)v; (void)off;
@@ -840,4 +840,91 @@ static void build_path(char *out, uint32_t outsz, const char *base, uint32_t slo
     char num[8]; uint_to_str(slot, num, sizeof(num));
     kstrcat(out, num);
     if (suffix) kstrcat(out, suffix);
+}
+
+// initialise /net filesystem
+void netfs_init(void) {
+
+    kprintf("NETFS: Initialising\n");
+
+    // initial state setup
+    memset(tcp_conns, 0, sizeof(tcp_conns));                                                // clear TCP conn slots
+    memset(udp_conns, 0, sizeof(udp_conns));                                                // clear UDP conn slots
+
+    for (uint32_t i = 0; i < NETFS_TCP_MAX; i++) {                                          // TCP: fix zero'd blocking fields
+        tcp_conns[i].blocked_reader    = NETFS_NO_WAITER;                                   // NETFS_NO_WAITER = 0xFFFF
+        tcp_conns[i].blocked_connector = NETFS_NO_WAITER;
+        tcp_conns[i].blocked_acceptor  = NETFS_NO_WAITER;
+    }
+
+    for (uint32_t i = 0; i < NETFS_UDP_MAX; i++) {                                          // UDP: fix zero'd blocking fields
+        udp_conns[i].blocked_reader = NETFS_NO_WAITER;                                      // NETFS_NO_WAITER = 0xFFFF
+    }
+
+    // create directory structure
+    vfs_mkdir("/net");
+    vfs_mkdir("/net/tcp");
+    vfs_mkdir("/net/udp");
+    vfs_mkdir("/net/ipifc");
+    vfs_mkdir("/net/ipifc/0");
+
+    // register /net/tcp/clone vnode = create new TCP sockets
+    reg("/net/tcp/clone", make_vnode(&tcp_clone_ops, PROTO_TCP, FTYPE_CLONE, 0));
+
+    // build /net/tcp/N/{ctl,data,status,local,remote}
+    char path[VFS_PATH_MAX];
+    for (uint32_t i = 0; i < NETFS_TCP_MAX; i++) {                                          // for each tcp slot
+
+        build_path(path, sizeof(path), "/net/tcp/", i, 0);                                  // create directory /tcp/0, /tcp/1, /tcp/2
+        vfs_mkdir(path);
+
+        build_path(path, sizeof(path), "/net/tcp/", i, "/ctl");                             // create ctl file (control commands)
+        reg(path, make_vnode(&tcp_ctl_ops, PROTO_TCP, FTYPE_CTL, i));
+
+        build_path(path, sizeof(path), "/net/tcp/", i, "/data");                            // create data file (send/recieve data)
+        reg(path, make_vnode(&tcp_data_ops, PROTO_TCP, FTYPE_DATA, i));
+
+        build_path(path, sizeof(path), "/net/tcp/", i, "/status");                          // create status file (connection state)
+        reg(path, make_vnode(&tcp_status_ops, PROTO_TCP, FTYPE_STATUS, i));
+
+        build_path(path, sizeof(path), "/net/tcp/", i, "/local");                           // create local file (local IP:port)
+        reg(path, make_vnode(&tcp_local_ops, PROTO_TCP, FTYPE_LOCAL, i));
+
+        build_path(path, sizeof(path), "/net/tcp/", i, "/remote");                          // create remote file (remote IP:port)
+        reg(path, make_vnode(&tcp_remote_ops, PROTO_TCP, FTYPE_REMOTE, i));
+    }
+
+    // register /net/udp/clone vnode = create new UDP sockets
+    reg("/net/udp/clone", make_vnode(&udp_clone_ops, PROTO_UDP, FTYPE_CLONE, 0));
+
+    // build /net/tcp/N/{ctl,data,status,local,remote}
+    for (uint32_t i = 0; i < NETFS_UDP_MAX; i++) {
+
+        build_path(path, sizeof(path), "/net/udp/", i, 0);                                  // create directory /udp/0, /udp/1, /udp/2
+        vfs_mkdir(path);
+
+        build_path(path, sizeof(path), "/net/udp/", i, "/ctl");                             // create ctl file (control commands)
+        reg(path, make_vnode(&udp_ctl_ops,    PROTO_UDP, FTYPE_CTL,    i));
+
+        build_path(path, sizeof(path), "/net/udp/", i, "/data");                            // create data file (send/recieve data)
+        reg(path, make_vnode(&udp_data_ops,   PROTO_UDP, FTYPE_DATA,   i));
+
+        build_path(path, sizeof(path), "/net/udp/", i, "/status");                          // create status file (connection state)
+        reg(path, make_vnode(&udp_status_ops, PROTO_UDP, FTYPE_STATUS, i));
+
+        build_path(path, sizeof(path), "/net/udp/", i, "/local");                           // create local file (local IP:port)
+        reg(path, make_vnode(&udp_local_ops,  PROTO_UDP, FTYPE_LOCAL,  i));
+
+        build_path(path, sizeof(path), "/net/udp/", i, "/remote");                          // create remote file (remote IP:port)
+        reg(path, make_vnode(&udp_remote_ops, PROTO_UDP, FTYPE_REMOTE, i));
+    }
+
+    // IP interface files
+    reg("/net/ipifc/0/status", make_vnode(&ipifc_status_ops, 0, FTYPE_IPIFC_STATUS, 0));    // create /ipifc/0/status   (show IP, mask, gateway, MAC)
+    reg("/net/ipifc/0/ctl",    make_vnode(&ipifc_ctl_ops,    0, FTYPE_IPIFC_CTL,    0));    // create /ipifc/0/ctl      (configure interface)
+
+    // register /net/arp vnode
+    reg("/net/arp", make_vnode(&arp_ops, 0, FTYPE_ARP, 0));
+
+    kprintf("NETFS: /net ready  tcp=%u slots  udp=%u slots\n", NETFS_TCP_MAX, NETFS_UDP_MAX);
 }

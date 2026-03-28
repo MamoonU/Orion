@@ -34,10 +34,10 @@ ASM_OBJS := \
 	kernel/arch/x86/syscall.o
 
 C_OBJS := \
-	kernel/arch/x86/gdt.o      \
-	kernel/arch/x86/idt.o      \
-	kernel/arch/x86/tss.o      \
-	kernel/arch/x86/irq_c.o    \
+	kernel/arch/x86/gdt.o		\
+	kernel/arch/x86/idt.o		\
+	kernel/arch/x86/tss.o		\
+	kernel/arch/x86/irq_c.o		\
 	kernel/mm/pmm.o             \
 	kernel/mm/vmm.o             \
 	kernel/mm/kheap.o           \
@@ -47,6 +47,7 @@ C_OBJS := \
 	kernel/fs/pipe.o            \
 	kernel/fs/namespace.o       \
 	kernel/fs/pulsar.o          \
+	kernel/fs/netfs.o           \
 	kernel/proc/proc.o          \
 	kernel/proc/sched.o         \
 	kernel/proc/fork.o          \
@@ -148,7 +149,7 @@ $(LIBORION): $(LIBORION_OBJS)
 	@$(AR) rcs $@ $^
 
 # ─────────────────────────────────────────────────────────────
-# Kernel build rules (unchanged)
+# Kernel build rules
 # ─────────────────────────────────────────────────────────────
 kernel/arch/x86/boot.o:    kernel/arch/x86/boot.asm
 	@$(ASM) $(ASMFLAGS) $< -o $@
@@ -167,6 +168,9 @@ kernel/arch/x86/paging.o:  kernel/arch/x86/paging.asm
 
 kernel/arch/x86/syscall.o: kernel/arch/x86/syscall.asm
 	@$(ASM) $(ASMFLAGS) $< -o $@
+
+kernel/fs/netfs.o: kernel/fs/netfs.c
+	@$(CC) $(CFLAGS) -I lib/lwip/include -I lib/lwip/port -Wno-unused-parameter -Wno-address -c $< -o $@
 
 kernel/arch/x86/irq_c.o: kernel/arch/x86/irq.c
 	@$(CC) $(CFLAGS) -c $< -o $@

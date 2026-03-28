@@ -26,6 +26,7 @@
 #include "pci.h"
 #include "virtio_net.h"
 #include "lwip_orion.h"
+#include "netfs.h"
 
 #if defined(__linux__)
     #error "Must be compiled with a cross-compiler"
@@ -74,6 +75,7 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     virtio_net_init();
     lwip_orion_init();
     timer_register_tick_cb(lwip_orion_poll);
+    netfs_init();
 
     pcb_t *idle = proc_create("idle", PROC_PRIO_IDLE);
     kassert(idle != 0);
