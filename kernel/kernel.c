@@ -22,11 +22,11 @@
 #include "keyboard.h"
 #include "sched.h"
 #include "syscall.h"
-#include "shell.h"
 #include "pci.h"
 #include "virtio_net.h"
 #include "lwip_orion.h"
 #include "netfs.h"
+#include "elf.h"
 
 #if defined(__linux__)
     #error "Must be compiled with a cross-compiler"
@@ -83,10 +83,26 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     proc_set_ready(idle);
     sched_add(idle);
 
-    // (PID 1) shell: runs at normal priority so the idle process
+    // embed shell ELF (objcopy symbols) into ramfs at /bin/sh
+    extern uint8_t _binary_user_sh_sh_elf_start[];
+    extern uint8_t _binary_user_sh_sh_elf_end[];
+    uint32_t sh_elf_size = (uint32_t)(_binary_user_sh_sh_elf_end - _binary_user_sh_sh_elf_start);
+
+    vfs_mkdir("/bin");
+    file_t *sh_file = vfs_open("/bin/sh", O_CREAT | O_WRONLY);
+    kassert(sh_file != 0);
+    vfs_write(sh_file, _binary_user_sh_sh_elf_start, sh_elf_size);
+    vfs_close(sh_file);
+
+    // launch shell as ring-3 process
     pcb_t *sh = proc_create("orion-sh", PROC_PRIO_NORMAL);
     kassert(sh != 0);
-    proc_init_frame(sh, (uint32_t)shell_run);
+
+    uint32_t entry = elf_load_into("/bin/sh", (uint32_t)sh->page_directory);
+    kassert(entry != 0);
+
+    kassert(proc_setup_user_stack(sh) == 0);
+    proc_init_user_frame(sh, entry, USTACK_TOP - 4);
     proc_set_ready(sh);
     sched_add(sh);
 

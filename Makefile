@@ -1,5 +1,7 @@
 # ===== Orion OS Makefile =====
 
+.DEFAULT_GOAL := all
+
 ASM  := nasm
 CC   := i686-elf-gcc
 AR   := i686-elf-ar
@@ -55,7 +57,6 @@ C_OBJS := \
 	kernel/proc/elf.o           \
 	kernel/proc/fd.o            \
 	kernel/syscall/syscall.o    \
-	kernel/shell/shell.o        \
 	kernel/drivers/serial.o     \
 	kernel/drivers/vga.o        \
 	kernel/drivers/timer.o      \
@@ -107,8 +108,15 @@ LWIP_OBJS := $(LWIP_CORE_OBJS) $(LWIP_PORT_OBJS)
 OBJS := $(ASM_OBJS) $(C_OBJS)
 
 # ─────────────────────────────────────────────────────────────
+# Usermode binaries
+# ─────────────────────────────────────────────────────────────
+USER_SH_SRC   := user/sh/sh.c
+USER_SH_LD    := user/sh/linker_user.ld
+USER_SH_ELF   := user/sh/sh.elf
+USER_SH_BIN_O := user/sh/sh_bin.o
+
+# ─────────────────────────────────────────────────────────────
 # liborion — userspace runtime static library
-# .lo = userspace object (distinct from kernel .o)
 # ─────────────────────────────────────────────────────────────
 LIBORION_OBJS := \
 	lib/liborion/syscall.lo    \
@@ -123,30 +131,32 @@ LIBORION_OBJS := \
 
 LIBORION := lib/liborion/liborion.a
 
-ISODIR := isodir/boot
-
-.PHONY: all clean run
-
-all: myos.iso
-
-# ─────────────────────────────────────────────────────────────
-# liborion build rules
-# ─────────────────────────────────────────────────────────────
-
-# .asm -> .lo  (userspace asm — same format, different output name)
+# .asm -> .lo
 lib/liborion/syscall.lo: lib/liborion/syscall.asm
 	@$(ASM) $(ASMFLAGS) $< -o $@
 
-# .c -> .lo  (userspace C flags — no kernel headers)
+# .c -> .lo
 lib/liborion/%.lo: lib/liborion/%.c
 	@$(CC) $(UFLAGS) -c $< -o $@
 
-# archive all .lo into liborion.a
+# archive .lo -> liborion.a
 $(LIBORION): $(LIBORION_OBJS)
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
 	@echo "┃                       Building liborion                           ┃"
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
 	@$(AR) rcs $@ $^
+
+# ─────────────────────────────────────────────────────────────
+# user shell — must depend on liborion
+# ─────────────────────────────────────────────────────────────
+$(USER_SH_ELF): $(USER_SH_SRC) $(LIBORION) $(USER_SH_LD)
+	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+	@echo "┃                       Building user shell                         ┃"
+	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+	@$(CC) -T $(USER_SH_LD) $(UFLAGS) $(USER_SH_SRC) $(LIBORION) -lgcc -o $@
+
+$(USER_SH_BIN_O): $(USER_SH_ELF)
+	@i686-elf-objcopy -I binary -O elf32-i386 -B i386 $< $@
 
 # ─────────────────────────────────────────────────────────────
 # Kernel build rules
@@ -187,11 +197,16 @@ lib/lwip/port/%.o: lib/lwip/port/%.c
 # ─────────────────────────────────────────────────────────────
 # Top-level targets
 # ─────────────────────────────────────────────────────────────
-myos: $(OBJS) $(LIBORION) $(LWIP_OBJS)
+ISODIR := isodir/boot
+
+.PHONY: all clean run
+all: myos.iso
+
+myos: $(LIBORION) $(OBJS) $(USER_SH_BIN_O) $(LWIP_OBJS)
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
 	@echo "┃                          Linking Kernel                           ┃"
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
-	@$(CC) $(LDFLAGS) $(OBJS) $(LWIP_OBJS) -o myos -lgcc
+	@$(CC) $(LDFLAGS) $(OBJS) $(USER_SH_BIN_O) $(LWIP_OBJS) -o myos -lgcc
 
 myos.iso: myos
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
@@ -206,7 +221,8 @@ clean:
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
 	@echo "┃                            MAKE CLEAN                             ┃"
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
-	@rm -f $(OBJS) $(LIBORION_OBJS) $(LIBORION) $(LWIP_OBJS) myos myos.iso
+	@rm -f $(OBJS) $(LIBORION_OBJS) $(LIBORION) $(LWIP_OBJS) \
+	       $(USER_SH_ELF) $(USER_SH_BIN_O) myos myos.iso
 	@rm -rf isodir
 
 run:

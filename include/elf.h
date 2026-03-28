@@ -64,7 +64,10 @@ typedef struct {
 
 } __attribute__((packed)) Elf32_Phdr;
 
-// load ELF32 executable from the VFS path
+// load ELF32 executable from VFS path into an explicit page directory
+uint32_t elf_load_into(const char *path, uint32_t pd_phys);
+
+// load ELF32 executable from VFS path
 uint32_t elf_load(const char *path);
 
 #endif // ELF_H

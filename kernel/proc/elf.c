@@ -93,90 +93,64 @@ static int elf_load_segment(file_t *f, const Elf32_Phdr *ph, uint32_t pd_phys) {
     return 0;
 }
 
-// public loader: load executable & return entry point addr
-uint32_t elf_load(const char *path) {
 
-    if (!path) return 0;
+// load ELF32 executable into an *explicit* page directory
+uint32_t elf_load_into(const char *path, uint32_t pd_phys) {
 
-    // resolve target PD from calling process
-    pcb_t    *p       = sched_current();
-    uint32_t  pd_phys = (p && p->page_directory) ? (uint32_t)p->page_directory : vmm_get_kernel_pd();
+    if (!path || !pd_phys) return 0;                                                            // no file/PD = invalid
 
-    file_t *f = vfs_open(path, O_RDONLY);                                               // open binary
+    file_t *f = vfs_open(path, O_RDONLY);                                                       // open binary
     if (!f) {
         kprintf("ELF: cannot open \"%s\"\n", path);
         return 0;
     }
 
-    Elf32_Ehdr ehdr;                                                                    // read and validate the ELF header
+    Elf32_Ehdr ehdr;
+    int n = elf_read_at(f, &ehdr, sizeof(Elf32_Ehdr), 0);                                       // read ELF header
 
-    int n = elf_read_at(f, &ehdr, sizeof(Elf32_Ehdr), 0);
-
-    // ELF size
-    if (n != (int)sizeof(Elf32_Ehdr)) {
-        kprintf("ELF: \"%s\" too small for ELF header\n", path);
-        goto fail;
+    if (n != (int)sizeof(Elf32_Ehdr)) { kprintf("ELF: \"%s\" too small\n", path); goto fail; }  // validate size
+    if (ehdr.e_ident[0] != ELF_MAGIC0 || ehdr.e_ident[1] != ELF_MAGIC1 || ehdr.e_ident[2] != ELF_MAGIC2 || ehdr.e_ident[3] != ELF_MAGIC3) { //validate magic
+        kprintf("ELF: \"%s\" bad magic\n", path); goto fail;
     }
-    // ELF magic
-    if (ehdr.e_ident[0] != ELF_MAGIC0 || ehdr.e_ident[1] != ELF_MAGIC1 || ehdr.e_ident[2] != ELF_MAGIC2 || ehdr.e_ident[3] != ELF_MAGIC3) {
-        kprintf("ELF: \"%s\" bad magic\n", path);
-        goto fail;
-    }
-    // ELF class 
-    if (ehdr.e_ident[4] != ELFCLASS32) {
-        kprintf("ELF: \"%s\" not a 32-bit ELF\n", path);
-        goto fail;
-    }
-    // ELF endianness
-    if (ehdr.e_ident[5] != ELFDATA2LSB) {
-        kprintf("ELF: \"%s\" not little-endian\n", path);
-        goto fail;
-    }
-    // ELF type
-    if (ehdr.e_type != ET_EXEC) {
-        kprintf("ELF: \"%s\" not an executable (type=%u)\n", path, (uint32_t)ehdr.e_type);
-        goto fail;
-    }
-    // ELF architecture
-    if (ehdr.e_machine != EM_386) {
-        kprintf("ELF: \"%s\" not IA-32 (machine=%u)\n", path, (uint32_t)ehdr.e_machine);
-        goto fail;
-    }
-    // ELF header count
-    if (ehdr.e_phnum == 0) {
-        kprintf("ELF: \"%s\" has no program headers\n", path);
-        goto fail;
-    }
-    // ELF version
-    if (ehdr.e_version != 1) {
-        kprintf("ELF: \"%s\" unsupported version %u\n", path, ehdr.e_version);
-        goto fail;
-    }
+    if (ehdr.e_ident[4] != ELFCLASS32)  { kprintf("ELF: not 32-bit\n");       goto fail; }      // validate 32-bit
+    if (ehdr.e_ident[5] != ELFDATA2LSB) { kprintf("ELF: not little-endian\n"); goto fail; }     // validate little-endian
+    if (ehdr.e_type    != ET_EXEC)       { kprintf("ELF: not executable\n");   goto fail; }     // validate executable
+    if (ehdr.e_machine != EM_386)        { kprintf("ELF: not IA-32\n");        goto fail; }     // validate x86 architecture
+    if (ehdr.e_phnum   == 0)             { kprintf("ELF: no phdrs\n");         goto fail; }     // validate program headers
+    if (ehdr.e_version != 1)             { kprintf("ELF: bad version\n");      goto fail; }     // validate version 1
 
     kprintf("ELF: loading \"%s\"  entry=0x%p  phdrs=%u  pd=0x%p\n", path, ehdr.e_entry, (uint32_t)ehdr.e_phnum, pd_phys);
-
-    // iterate program headers
-    for (uint32_t i = 0; i < (uint32_t)ehdr.e_phnum; i++) {
+ 
+    for (uint32_t i = 0; i < (uint32_t)ehdr.e_phnum; i++) {                                     // iterate program headers
 
         Elf32_Phdr phdr;
-        uint32_t ph_off = ehdr.e_phoff + i * (uint32_t)ehdr.e_phentsize;        // location calculation
+        uint32_t ph_off = ehdr.e_phoff + i * (uint32_t)ehdr.e_phentsize;
+        n = elf_read_at(f, &phdr, sizeof(Elf32_Phdr), ph_off);                                  // read each program header
 
-        n = elf_read_at(f, &phdr, sizeof(Elf32_Phdr), ph_off);
         if (n != (int)sizeof(Elf32_Phdr)) {
-            kprintf("ELF: \"%s\" short read on phdr %u\n", path, i);
-            goto fail;
+            kprintf("ELF: short phdr read %u\n", i); goto fail;
         }
 
-        if (phdr.p_type != PT_LOAD) continue;                                   // PT_LOAD segments only
-
-        if (elf_load_segment(f, &phdr, pd_phys) != 0) goto fail;                         // map mem & copy file data
+        if (phdr.p_type != PT_LOAD) continue;                                                   // filter: only loadable segments
+        if (elf_load_segment(f, &phdr, pd_phys) != 0) goto fail;                                // load segment
     }
 
-    vfs_close(f);
-    kprintf("ELF: \"%s\" loaded OK  entry=0x%p\n", path, ehdr.e_entry);         // return entry point
-    return ehdr.e_entry;
+    vfs_close(f);                                                                               // close 
+    kprintf("ELF: \"%s\" loaded OK  entry=0x%p\n", path, ehdr.e_entry);
+    return ehdr.e_entry;                                                                        // return entry point
 
 fail:
     vfs_close(f);
     return 0;
+}
+
+// load into the *current* process's PD (or kernel PD if no process)
+uint32_t elf_load(const char *path) {
+
+    if (!path) return 0;
+
+    pcb_t    *p       = sched_current();                                                                // return current process
+    uint32_t  pd_phys = (p && p->page_directory) ? (uint32_t)p->page_directory : vmm_get_kernel_pd();   // select page directory (current process or kernel space)
+
+    return elf_load_into(path, pd_phys);                                                                // delegate to real loader = elf_load_into()
 }
