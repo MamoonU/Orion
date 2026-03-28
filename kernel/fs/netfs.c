@@ -644,22 +644,23 @@ static int udp_data_write(vnode_t *v, const void *buf, uint32_t len, uint32_t of
     (void)off;
     netfs_file_t *f = (netfs_file_t *)v->data;
     netfs_udp_t  *c = &udp_conns[f->slot];
-    if (c->state != CONN_ESTABLISHED) return -1;
+    if (c->state != CONN_ESTABLISHED) return -1;                                // check state
 
-    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, (u16_t)len, PBUF_RAM);
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, (u16_t)len, PBUF_RAM);          // allocate pbuf
     if (!p) return -1;
-    memcpy(p->payload, buf, len);
+    memcpy(p->payload, buf, len);                                               // copy data
 
     err_t e;
-    if (ip4_addr_isany_val(c->remote_ip))
+    if (ip4_addr_isany_val(c->remote_ip))                                       // send data
         e = udp_sendto(c->pcb, p, &c->remote_ip, c->remote_port);
     else
         e = udp_send(c->pcb, p);
 
-    pbuf_free(p);
+    pbuf_free(p);                                                               // free buffer
     return (e == ERR_OK) ? (int)len : -1;
 }
 
+// return free/allocated/established
 static int udp_status_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
     (void)off;
     netfs_file_t *f = (netfs_file_t *)v->data;
@@ -676,6 +677,7 @@ static int udp_status_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
     return (int)n;
 }
 
+// local IP!port -> human readable
 static int udp_local_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
     (void)off;
     netfs_file_t *f = (netfs_file_t *)v->data;
@@ -687,6 +689,7 @@ static int udp_local_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
     return (int)n;
 }
 
+// remote IP!port -> human readable
 static int udp_remote_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
     (void)off;
     netfs_file_t *f = (netfs_file_t *)v->data;
@@ -696,4 +699,145 @@ static int udp_remote_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
     if (n > len) n = len;
     memcpy(buf, tmp, n);
     return (int)n;
+}
+
+// /net/ififc/status: return current network interface as text
+static int ipifc_status_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+
+    (void)v; (void)off;
+    char tmp[256]; tmp[0] = '\0';                                                   // temp buff to build output string manually
+
+    if (netif_default) {                                                            // lwIP's default network interface (virtio-net)
+        char ip_s[20], mask_s[20], gw_s[20];
+        ip4addr_ntoa_r(netif_ip4_addr(netif_default),    ip_s,   sizeof(ip_s));     // extract IP address
+        ip4addr_ntoa_r(netif_ip4_netmask(netif_default), mask_s, sizeof(mask_s));   // extract netmask
+        ip4addr_ntoa_r(netif_ip4_gw(netif_default),      gw_s,   sizeof(gw_s));     // extract gateway
+
+        uint8_t mac[6]; virtio_net_get_mac(mac);                                    // return MAC address
+        // format: "ip=x.x.x.x mask=x.x.x.x gw=x.x.x.x mac=xx:xx:xx:xx:xx:xx\n"
+        strncpy(tmp, "ip=",   sizeof(tmp)-1); kstrcat(tmp, ip_s);                   // building output string manually
+        kstrcat(tmp, " mask="); kstrcat(tmp, mask_s);
+        kstrcat(tmp, " gw=");   kstrcat(tmp, gw_s);
+
+        char mac_str[20];
+        static const char hex[] = "0123456789abcdef";                               // manual MAC formatting
+        for (int i = 0, j = 0; i < 6; i++) {
+            if (i > 0) mac_str[j++] = ':';
+            mac_str[j++] = hex[(mac[i] >> 4) & 0xF];
+            mac_str[j++] = hex[ mac[i]        & 0xF];
+            mac_str[j]   = '\0';
+        }
+        kstrcat(tmp, " mac=");                                                      // append MAC manually (no sprintf in kernel)
+        kstrcat(tmp, mac_str);
+        kstrcat(tmp, "\n");
+    } else {
+        strncpy(tmp, "no interface\n", sizeof(tmp)-1);                              // no interface
+    }
+
+    uint32_t n = (uint32_t)strlen(tmp);
+    if (n > len) n = len;
+    memcpy(buf, tmp, n);                                                            // return to user
+    return (int)n;
+}
+
+// /net/ififc/ctl: manually configure IP settings
+static int ipifc_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off) {
+
+    (void)v; (void)off;
+    if (!netif_default) return -1;
+
+    char cmd[128];
+    uint32_t n = (len < sizeof(cmd)-1) ? len : sizeof(cmd)-1;
+    memcpy(cmd, buf, n); cmd[n] = '\0';
+    trim_ws(cmd);                                                   // parse command
+
+    if (strncmp(cmd, "add ", 4) == 0) {                             // only supported command ( add <ip> <mask> [gateway] )
+
+        const char *p = cmd + 4;                                    // parsing pointer
+        ip4_addr_t ip, mask, gw;
+        ip4_addr_set_any(&gw);
+        const char *tok = p;                                        // parse token start
+        while (*p && *p != ' ') p++;                                // scan until " "
+        char s[20];
+        uint32_t sl = (uint32_t)(p - tok);                          // compute length
+        if (sl >= sizeof(s)) return -1;
+        memcpy(s, tok, sl);                                         // copy into temp buffer
+        s[sl] = '\0';
+        if (!ip4addr_aton(s, &ip)) return -1;                       // string -> IP
+        while (*p == ' ') p++;                                      // skip spaces
+
+        tok = p;                                                    // parse subnet mask (same logic above)
+        while (*p && *p != ' ') p++;
+        sl = (uint32_t)(p - tok);
+        if (sl >= sizeof(s)) return -1;
+        memcpy(s, tok, sl);
+        s[sl] = '\0';
+        if (!ip4addr_aton(s, &mask)) return -1;
+        while (*p == ' ') p++;
+
+        if (*p) ip4addr_aton(p, &gw);                               // parse optional gateway
+
+        netif_set_addr(netif_default, &ip, &mask, &gw);             // apply configuration to lwIP
+        netif_set_up(netif_default);
+        kprintf("NETFS: ipifc: static IP configured\n");
+        return (int)len;
+    }
+    return -1;
+}
+
+// ARP placeholder
+static int arp_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+
+    (void)v;
+    (void)off;
+
+    const char *msg = "arp table: see lwIP etharp internals\n";
+    uint32_t n = (uint32_t)strlen(msg);
+    if (n > len) n = len;
+    memcpy(buf, msg, n);
+    return (int)n;
+}
+
+// VFS ops tables: map files -> functions
+static vfs_ops_t tcp_clone_ops  = { .read = tcp_clone_read };
+static vfs_ops_t tcp_ctl_ops    = { .write = tcp_ctl_write };
+static vfs_ops_t tcp_data_ops   = { .read = tcp_data_read,  .write = tcp_data_write };
+static vfs_ops_t tcp_status_ops = { .read = tcp_status_read };
+static vfs_ops_t tcp_local_ops  = { .read = tcp_local_read };
+static vfs_ops_t tcp_remote_ops = { .read = tcp_remote_read };
+
+static vfs_ops_t udp_clone_ops  = { .read = udp_clone_read };
+static vfs_ops_t udp_ctl_ops    = { .write = udp_ctl_write };
+static vfs_ops_t udp_data_ops   = { .read = udp_data_read,  .write = udp_data_write };
+static vfs_ops_t udp_status_ops = { .read = udp_status_read };
+static vfs_ops_t udp_local_ops  = { .read = udp_local_read };
+static vfs_ops_t udp_remote_ops = { .read = udp_remote_read };
+
+static vfs_ops_t ipifc_status_ops = { .read  = ipifc_status_read };
+static vfs_ops_t ipifc_ctl_ops    = { .write = ipifc_ctl_write };
+static vfs_ops_t arp_ops          = { .read  = arp_read };
+
+// create filesystem vnode = network object
+static vnode_t *make_vnode(vfs_ops_t *ops, uint8_t proto, uint8_t ftype, uint32_t slot) {
+
+    netfs_file_t *fd = (netfs_file_t *)kmalloc(sizeof(netfs_file_t));   // store protocol, file type, slot
+    if (!fd) return 0;
+    fd->proto = proto; fd->ftype = ftype; fd->slot = slot;
+
+    vnode_t *v = vnode_alloc(VNODE_DEV, ops, fd);                       // create vnode (type = device, ops = function table, data = my metadata)
+    if (!v) { kfree(fd); return 0; }
+    return v;
+}
+
+// register vnode -> RAMfs
+static void reg(const char *path, vnode_t *v) {
+    if (v) ramfs_register_dev(path, v);
+}
+
+// build path: dynamically construct ( base + N + suffix into out[outsz] )
+static void build_path(char *out, uint32_t outsz, const char *base, uint32_t slot, const char *suffix) {
+    strncpy(out, base, outsz - 1); out[outsz - 1] = '\0';
+    char num[8]; uint_to_str(slot, num, sizeof(num));
+    kstrcat(out, num);
+    if (suffix) kstrcat(out, suffix);
 }
