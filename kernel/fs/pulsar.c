@@ -80,10 +80,6 @@ static void get_signat(const uint8_t *b, uint32_t *p, pulsar_signat_t *q) {     
     q->path = get_u64(b, p);
 }
 
-// shared static buffers
-static uint8_t s_send_buf[PULSAR_MSIZE];    // send
-static uint8_t s_recv_buf[PULSAR_MSIZE];    // recieve
-
 // write 7-byte header into buf -> advance *pos to the body start
 static void pulse_begin(uint8_t *buf, uint8_t type, uint16_t tag, uint32_t *pos) {
     *pos = 0;
@@ -211,13 +207,14 @@ int pulsar_release(pulsar_session_t *s, uint32_t beam) {
 
     uint16_t tag = alloc_tag(s);                                    // allocate tag
     uint32_t pos = 0;
-    pulse_begin(s_send_buf, EMIT_RELEASE, tag, &pos);               // build message
-    put_u32(s_send_buf, &pos, beam);
 
-    if (pulse_send(s, s_send_buf, pos) < 0) return -1;              // send request
+    pulse_begin(s->send_buf, EMIT_RELEASE, tag, &pos);               // build message
+    put_u32(s->send_buf, &pos, beam);
 
-    int len = pulse_recv(s, s_recv_buf);                            // recieve reply
-    if (pulse_check(s_recv_buf, len, ECHO_RELEASE, tag) < 0) return -1;
+    if (pulse_send(s, s->send_buf, pos) < 0) return -1;              // send request
+
+    int len = pulse_recv(s, s->recv_buf);                            // recieve reply
+    if (pulse_check(s->recv_buf, len, ECHO_RELEASE, tag) < 0) return -1;
 
     pulsar_beam_free(s, beam);                                      // free local beam
     return 0;
@@ -241,18 +238,19 @@ pulsar_session_t *pulsar_session_create(file_t *srv_file) {
 
     // EMIT_HAIL (check version & msize)
     uint32_t pos = 0;
-    pulse_begin(s_send_buf, EMIT_HAIL, PULSAR_NOTAG, &pos);
-    put_u32(s_send_buf, &pos, PULSAR_MSIZE);
-    put_str(s_send_buf, &pos, PULSAR_VERSION);
+    pulse_begin(s->send_buf, EMIT_HAIL, PULSAR_NOTAG, &pos);
 
-    if (pulse_send(s, s_send_buf, pos) < 0) {
+    put_u32(s->send_buf, &pos, PULSAR_MSIZE);
+    put_str(s->send_buf, &pos, PULSAR_VERSION);
+
+    if (pulse_send(s, s->send_buf, pos) < 0) {
         kprintf("PULSAR: session_create — EMIT_HAIL send failed\n");
         kfree(s);
         return 0;
     }
 
-    int len = pulse_recv(s, s_recv_buf);
-    if (pulse_check(s_recv_buf, len, ECHO_HAIL, PULSAR_NOTAG) < 0) {
+    int len = pulse_recv(s, s->recv_buf);
+    if (pulse_check(s->recv_buf, len, ECHO_HAIL, PULSAR_NOTAG) < 0) {
         kprintf("PULSAR: session_create — ECHO_HAIL failed\n");
         kfree(s);
         return 0;
@@ -260,9 +258,10 @@ pulsar_session_t *pulsar_session_create(file_t *srv_file) {
 
     // parse ECHO_HAIL body
     pos = PULSAR_HDR;
-    uint32_t server_msize = get_u32(s_recv_buf, &pos);                                  // parsing msize
+    uint32_t server_msize = get_u32(s->recv_buf, &pos);                                  // parsing msize
     char     ver[16];                                                                   // parsing version
-    get_str(s_recv_buf, &pos, ver, sizeof(ver));
+    get_str(s->recv_buf, &pos, ver, sizeof(ver));
+
 
     // accept smaller of two msizes
     if (server_msize < s->msize) s->msize = server_msize;
@@ -281,19 +280,20 @@ int pulsar_session_attach(pulsar_session_t *s, const char *aname) {
 
     uint16_t tag = alloc_tag(s);
     uint32_t pos = 0;
-    pulse_begin(s_send_buf, EMIT_DOCK, tag, &pos);                                  // EMIT_DOCK: build request
-    put_u32(s_send_buf, &pos, root);                                                // root beam fid
-    put_u32(s_send_buf, &pos, PULSAR_NOBEAM);                                       // authentication fid = NOBEAM (no auth)
-    put_str(s_send_buf, &pos, "");                                                  // uname (kernel mounts as "")
-    put_str(s_send_buf, &pos, aname ? aname : "");                                  // aname (filesystem name)
+    
+    pulse_begin(s->send_buf, EMIT_DOCK, tag, &pos);                                  // EMIT_DOCK: build request
+    put_u32(s->send_buf, &pos, root);                                                // root beam fid
+    put_u32(s->send_buf, &pos, PULSAR_NOBEAM);                                       // authentication fid = NOBEAM (no auth)
+    put_str(s->send_buf, &pos, "");                                                  // uname (kernel mounts as "")
+    put_str(s->send_buf, &pos, aname ? aname : "");                                  // aname (filesystem name)
 
-    if (pulse_send(s, s_send_buf, pos) < 0) {
+    if (pulse_send(s, s->send_buf, pos) < 0) {
         pulsar_beam_free(s, root);
         return -1;
     }
 
-    int len = pulse_recv(s, s_recv_buf);
-    if (pulse_check(s_recv_buf, len, ECHO_DOCK, tag) < 0) {                         // ECHO_DOCK = returns SIGNAT
+    int len = pulse_recv(s, s->recv_buf);
+    if (pulse_check(s->recv_buf, len, ECHO_DOCK, tag) < 0) {                         // ECHO_DOCK = returns SIGNAT
         pulsar_beam_free(s, root);
         return -1;
     }
@@ -301,7 +301,8 @@ int pulsar_session_attach(pulsar_session_t *s, const char *aname) {
     // parse ECHO_DOCK body
     pos = PULSAR_HDR;
     pulsar_signat_t sig;
-    get_signat(s_recv_buf, &pos, &sig);
+    get_signat(s->recv_buf, &pos, &sig);
+    
 
     s->root_beam = root;                                                            // update session
     s->attached  = 1;
@@ -328,22 +329,23 @@ int pulsar_traverse(pulsar_session_t *s, uint32_t src_beam, uint32_t new_beam, c
 
     uint16_t tag = alloc_tag(s);
     uint32_t pos = 0;
-    pulse_begin(s_send_buf, EMIT_TRAVERSE, tag, &pos);                          // build request
-    put_u32(s_send_buf, &pos, src_beam);                                        // src_beam = starting directory
-    put_u32(s_send_buf, &pos, new_beam);                                        // new_beam = destination handle
-    put_u16(s_send_buf, &pos, (uint16_t)ncomp);                                 // components
+    
+    pulse_begin(s->send_buf, EMIT_TRAVERSE, tag, &pos);                          // build request
+    put_u32(s->send_buf, &pos, src_beam);                                        // src_beam = starting directory
+    put_u32(s->send_buf, &pos, new_beam);                                        // new_beam = destination handle
+    put_u16(s->send_buf, &pos, (uint16_t)ncomp);                                 // components
 
     for (uint32_t i = 0; i < ncomp; i++)
-        put_str(s_send_buf, &pos, components[i]);                               // wire as strings
+        put_str(s->send_buf, &pos, components[i]);                               // wire as strings
 
-    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
+    if (pulse_send(s, s->send_buf, pos) < 0) return -1;
 
-    int len = pulse_recv(s, s_recv_buf);                                        // pulse recieve
-    if (pulse_check(s_recv_buf, len, ECHO_TRAVERSE, tag) < 0) return -1;        // return QID for each component walked
+    int len = pulse_recv(s, s->recv_buf);                                        // pulse recieve
+    if (pulse_check(s->recv_buf, len, ECHO_TRAVERSE, tag) < 0) return -1;        // return QID for each component walked
 
     // parse ECHO_TRAVERSE
     pos = PULSAR_HDR;
-    uint16_t nwqid = get_u16(s_recv_buf, &pos);                                 // partial walk detection
+    uint16_t nwqid = get_u16(s->recv_buf, &pos);                                 // partial walk detection
 
     if (ncomp > 0 && nwqid != ncomp) {
         kprintf("PULSAR: traverse — partial walk: %u of %u components\n", (uint32_t)nwqid, ncomp);
@@ -354,7 +356,8 @@ int pulsar_traverse(pulsar_session_t *s, uint32_t src_beam, uint32_t new_beam, c
     pulsar_signat_t last;
     last.type = 0; last.vers = 0; last.path = 0;
     for (uint16_t i = 0; i < nwqid; i++)                                        // for each QID
-        get_signat(s_recv_buf, &pos, &last);                                    // return last QID
+        get_signat(s->recv_buf, &pos, &last);                                    // return last QID
+    
 
     if (signat_out) *signat_out = last;
     return 0;
@@ -366,20 +369,22 @@ int pulsar_open(pulsar_session_t *s, uint32_t beam, uint8_t mode, pulsar_signat_
     uint16_t tag = alloc_tag(s);
     uint32_t pos = 0;
 
-    pulse_begin(s_send_buf, EMIT_OPEN, tag, &pos);                              // build request
-    put_u32(s_send_buf, &pos, beam);                                            // return beam
-    put_u8 (s_send_buf, &pos, mode);                                            // return mode (0=read | 1=write | 2=read/write | 3=execute)
+    
+    pulse_begin(s->send_buf, EMIT_OPEN, tag, &pos);                              // build request
+    put_u32(s->send_buf, &pos, beam);                                            // return beam
+    put_u8 (s->send_buf, &pos, mode);                                            // return mode (0=read | 1=write | 2=read/write | 3=execute)
 
-    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
+    if (pulse_send(s, s->send_buf, pos) < 0) return -1;
 
-    int len = pulse_recv(s, s_recv_buf);                                        // pulse recieve
-    if (pulse_check(s_recv_buf, len, ECHO_OPEN, tag) < 0) return -1;
+    int len = pulse_recv(s, s->recv_buf);                                        // pulse recieve
+    if (pulse_check(s->recv_buf, len, ECHO_OPEN, tag) < 0) return -1;
 
     // parse ECHO_OPEN
     pos = PULSAR_HDR;
     pulsar_signat_t sig;
-    get_signat(s_recv_buf, &pos, &sig);                                         // return QID
-    (void)get_u32(s_recv_buf, &pos);                                            // return iounit (max transfer size read/write)
+    get_signat(s->recv_buf, &pos, &sig);                                         // return QID
+    (void)get_u32(s->recv_buf, &pos);                                            // return iounit (max transfer size read/write)
+    
 
     if (signat_out) *signat_out = sig;
     return 0;
@@ -393,23 +398,25 @@ int pulsar_read(pulsar_session_t *s, uint32_t beam, uint32_t offset, void *out, 
 
     uint16_t tag = alloc_tag(s);
     uint32_t pos = 0;
-    pulse_begin(s_send_buf, EMIT_READ, tag, &pos);                              // build request
-    put_u32(s_send_buf, &pos, beam);                                            // beam
-    put_u64(s_send_buf, &pos, (uint64_t)offset);                                // offset
-    put_u32(s_send_buf, &pos, count);                                           // count bytes
+    
+    pulse_begin(s->send_buf, EMIT_READ, tag, &pos);                              // build request
+    put_u32(s->send_buf, &pos, beam);                                            // beam
+    put_u64(s->send_buf, &pos, (uint64_t)offset);                                // offset
+    put_u32(s->send_buf, &pos, count);                                           // count bytes
 
-    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
+    if (pulse_send(s, s->send_buf, pos) < 0) return -1;
 
-    int len = pulse_recv(s, s_recv_buf);                                        // pulse recieve
-    if (pulse_check(s_recv_buf, len, ECHO_READ, tag) < 0) return -1;
+    int len = pulse_recv(s, s->recv_buf);                                        // pulse recieve
+    if (pulse_check(s->recv_buf, len, ECHO_READ, tag) < 0) return -1;
 
     // parse ECHO_READ
     pos = PULSAR_HDR;
-    uint32_t rcount = get_u32(s_recv_buf, &pos);
+    uint32_t rcount = get_u32(s->recv_buf, &pos);
     if (rcount > count) rcount = count;
 
     for (uint32_t i = 0; i < rcount; i++)                                       // copy data into output buffer
-        ((uint8_t *)out)[i] = s_recv_buf[pos + i];
+        ((uint8_t *)out)[i] = s->recv_buf[pos + i];
+    
 
     return (int)rcount;
 }
@@ -423,22 +430,24 @@ int pulsar_write(pulsar_session_t *s, uint32_t beam, uint32_t offset, const void
 
     uint16_t tag = alloc_tag(s);
     uint32_t pos = 0;
-    pulse_begin(s_send_buf, EMIT_WRITE, tag, &pos);                         // build request
-    put_u32(s_send_buf, &pos, beam);                                        // beam
-    put_u64(s_send_buf, &pos, (uint64_t)offset);                            // offset
-    put_u32(s_send_buf, &pos, count);                                       // count bytes
+    
+    pulse_begin(s->send_buf, EMIT_WRITE, tag, &pos);                         // build request
+    put_u32(s->send_buf, &pos, beam);                                        // beam
+    put_u64(s->send_buf, &pos, (uint64_t)offset);                            // offset
+    put_u32(s->send_buf, &pos, count);                                       // count bytes
 
     for (uint32_t i = 0; i < count; i++)                                    // data copy
-        s_send_buf[pos++] = ((const uint8_t *)data)[i];
+        s->send_buf[pos++] = ((const uint8_t *)data)[i];
 
-    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
+    if (pulse_send(s, s->send_buf, pos) < 0) return -1;
 
-    int len = pulse_recv(s, s_recv_buf);                                    // pulse recieve
-    if (pulse_check(s_recv_buf, len, ECHO_WRITE, tag) < 0) return -1;
+    int len = pulse_recv(s, s->recv_buf);                                    // pulse recieve
+    if (pulse_check(s->recv_buf, len, ECHO_WRITE, tag) < 0) return -1;
 
     // parse ECHO_WRITE
     pos = PULSAR_HDR;
-    return (int)get_u32(s_recv_buf, &pos);
+    return (int)get_u32(s->recv_buf, &pos);
+    
 }
 
 // EMIT_SCAN: scan a beam - fill name, signat and size (any may = NULL)
@@ -446,31 +455,33 @@ int pulsar_scan(pulsar_session_t *s, uint32_t beam, char *name_out, uint32_t nam
 
     uint16_t tag = alloc_tag(s);
     uint32_t pos = 0;
-    pulse_begin(s_send_buf, EMIT_SCAN, tag, &pos);                          // begin request
-    put_u32(s_send_buf, &pos, beam);                                        // beam
+    
+    pulse_begin(s->send_buf, EMIT_SCAN, tag, &pos);                          // begin request
+    put_u32(s->send_buf, &pos, beam);                                        // beam
 
-    if (pulse_send(s, s_send_buf, pos) < 0) return -1;
+    if (pulse_send(s, s->send_buf, pos) < 0) return -1;
 
-    int len = pulse_recv(s, s_recv_buf);                                    // pulse recieve
-    if (pulse_check(s_recv_buf, len, ECHO_SCAN, tag) < 0) return -1;
+    int len = pulse_recv(s, s->recv_buf);                                    // pulse recieve
+    if (pulse_check(s->recv_buf, len, ECHO_SCAN, tag) < 0) return -1;
 
     pos = PULSAR_HDR;
-    (void)get_u16(s_recv_buf, &pos);                    // outer byte count = count[2]
-    (void)get_u16(s_recv_buf, &pos);                    // inner size       = size[2]
-    (void)get_u16(s_recv_buf, &pos);                    // type             = type[2]
-    (void)get_u32(s_recv_buf, &pos);                    // dev              = dev[4]
+    (void)get_u16(s->recv_buf, &pos);                    // outer byte count = count[2]
+    (void)get_u16(s->recv_buf, &pos);                    // inner size       = size[2]
+    (void)get_u16(s->recv_buf, &pos);                    // type             = type[2]
+    (void)get_u32(s->recv_buf, &pos);                    // dev              = dev[4]
 
     pulsar_signat_t sig;
-    get_signat(s_recv_buf, &pos, &sig);                 // QID              = qid[13]
+    get_signat(s->recv_buf, &pos, &sig);                 // QID              = qid[13]
 
-    (void)get_u32(s_recv_buf, &pos);                    // mode             = mode[4]
-    (void)get_u32(s_recv_buf, &pos);                    // atime            = atime[4]
-    (void)get_u32(s_recv_buf, &pos);                    // mtime            = mtime[4]
+    (void)get_u32(s->recv_buf, &pos);                    // mode             = mode[4]
+    (void)get_u32(s->recv_buf, &pos);                    // atime            = atime[4]
+    (void)get_u32(s->recv_buf, &pos);                    // mtime            = mtime[4]
 
-    uint64_t fsize = get_u64(s_recv_buf, &pos);         // fsize    = length[8]
+    uint64_t fsize = get_u64(s->recv_buf, &pos);         // fsize    = length[8]
 
     char name_tmp[VFS_NAME_MAX];                        // name
-    get_str(s_recv_buf, &pos, name_tmp, VFS_NAME_MAX);
+    get_str(s->recv_buf, &pos, name_tmp, VFS_NAME_MAX);
+    
 
     if (name_out && name_max > 0) {
         strncpy(name_out, name_tmp, name_max - 1);
@@ -589,7 +600,8 @@ static int pulsar_vfs_readdir(vnode_t *dir, uint32_t index, char *name_out, vnod
         char     tmp[DIR_CACHE_MAX][VFS_NAME_MAX];
         uint32_t tmp_count = 0;
         uint32_t read_off  = 0;                                                         // directory read offset
-        uint8_t  rbuf[PULSAR_MSIZE];                                                    // returned data
+        
+        uint8_t  rbuf[PULSAR_MSIZE];                                                    // returned data (local stack buffer is okay here)
 
         while (tmp_count < DIR_CACHE_MAX) {
             int n = pulsar_read(vd->session, vd->beam, read_off, rbuf, sizeof(rbuf));

@@ -32,7 +32,6 @@
 #define PULSAR_ENAME_MAX    128             // max error string length
 #define PULSAR_HDR          7               // header size: | size[4] | type[1] | tag[2]
 
-
 // version negotiation
 #define EMIT_HAIL       100     // (Tversion)
 #define ECHO_HAIL       101     // (Rversion)
@@ -124,6 +123,9 @@ typedef struct pulsar_session {
     uint8_t   attached;                     // 1 = EMIT_DOCK succeeded
     uint32_t  root_beam;                    // beam for the attached root
 
+    uint8_t send_buf[PULSAR_MSIZE];         // send
+    uint8_t recv_buf[PULSAR_MSIZE];         // recieve
+
 } pulsar_session_t;
 
 // vnode backing data
@@ -170,5 +172,8 @@ vnode_t *pulsar_vnode_create(pulsar_session_t *s, uint32_t beam, uint8_t vnode_t
 
 // create session from fd number in the current process's fd table -> attach -> bind server root at path in process namespace
 int pulsar_mount(int srv_fd, const char *path, uint8_t ns_flags);
+
+// dial a remote PULSAR server over TCP, negotiate protocol, mount at path.
+int pulsar_connect(const char *addr, const char *mount_path, uint8_t ns_flags);
 
 #endif

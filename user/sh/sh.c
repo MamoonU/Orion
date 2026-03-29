@@ -217,7 +217,58 @@ static void builtin_clear(void) {
 
 // ps = list processes: !!!!!!!no /proc filesystem yet!!!!!!!!
 static void builtin_ps(void) {
-    sh_write("ps: /proc not implemented.\n");
+
+    sh_write("PID  PPID NAME             STATE\n");
+    sh_write("---  ---- ---------------  -----\n");
+
+    char name_buf[8];
+    uint32_t index = 0;
+
+    int fd = open("/proc", O_RDONLY);                                               // open /proc as a directory
+    if (fd < 0) { sh_write("ps: cannot open /proc\n"); return; }
+
+    while (readdir(fd, index, name_buf, sizeof(name_buf)) == 0) {                   // iterate PID directory entries
+
+        index++;
+
+        if (name_buf[0] < '0' || name_buf[0] > '9') continue;                       // skip "uptime"
+
+        char status_path[32];
+        snprintf(status_path, sizeof(status_path), "/proc/%s/status", name_buf);    // build /proc/<pid>/status
+
+        int sfd = open(status_path, O_RDONLY);                                      // open status file
+        if (sfd < 0) continue;
+
+        char sbuf[256];
+        int  n = read(sfd, sbuf, sizeof(sbuf) - 1);                                 // read status file
+        close(sfd);
+        if (n <= 0) continue;
+        sbuf[n] = '\0';
+
+        char pid_s[8]="?", ppid_s[8]="?", name_s[32]="?", state_s[16]="?";          // extract pid, ppid, name, state from status file
+    
+        char *line = sbuf;
+        while (*line) {                                                             // line by line parsing
+            char *end = line;                                                       // find end of line
+            while (*end && *end != '\n') end++;
+            if (*end) *end = '\0';
+
+            // match fields
+            if      (strncmp(line, "pid: ",    5) == 0) strncpy(pid_s,   line+5, sizeof(pid_s)-1);      // pid
+            else if (strncmp(line, "ppid: ",   6) == 0) strncpy(ppid_s,  line+6, sizeof(ppid_s)-1);     // ppid
+            else if (strncmp(line, "name: ",   6) == 0) strncpy(name_s,  line+6, sizeof(name_s)-1);     // name
+            else if (strncmp(line, "state: ",  7) == 0) strncpy(state_s, line+7, sizeof(state_s)-1);    // state
+
+            line = end + 1;                                                         // move to next line
+        }
+
+        sh_write(pid_s);  sh_write("  ");                                           // print row
+        sh_write(ppid_s); sh_write("  ");
+        sh_write(name_s); sh_write("  ");
+        sh_write(state_s);
+        sh_putchar('\n');
+    }
+    close(fd);                                                                      // close
 }
 
 // bind [-b|-a] <src> <dst> = bind src into namespace at dst

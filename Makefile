@@ -50,6 +50,7 @@ C_OBJS := \
 	kernel/fs/namespace.o       \
 	kernel/fs/pulsar.o          \
 	kernel/fs/netfs.o           \
+	kernel/fs/procfs.o          \
 	kernel/proc/proc.o          \
 	kernel/proc/sched.o         \
 	kernel/proc/fork.o          \
