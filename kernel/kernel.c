@@ -102,7 +102,7 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     kassert(entry != 0);
 
     kassert(proc_setup_user_stack(sh) == 0);
-    proc_init_user_frame(sh, entry, USTACK_TOP - 4);
+    proc_init_user_frame(sh, entry, USTACK_TOP - 8);
     proc_set_ready(sh);
     sched_add(sh);
 

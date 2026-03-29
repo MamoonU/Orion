@@ -212,7 +212,7 @@ static void builtin_cat(int argc, char **argv) {
 
 // clear = print 25 new lines
 static void builtin_clear(void) {
-    for (int i = 0; i < 25; i++) sh_putchar('\n');
+    sh_write("\033[2J\033[H");
 }
 
 // ps = list processes: !!!!!!!no /proc filesystem yet!!!!!!!!

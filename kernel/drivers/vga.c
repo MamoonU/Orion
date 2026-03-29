@@ -99,3 +99,8 @@ void terminal_clear(void) {
     terminal_col = 0;
     cursor_sync();
 }
+
+void terminal_set_cursor(uint32_t row, uint32_t col) {
+    terminal_row    = row;
+    terminal_col    = col;
+}
