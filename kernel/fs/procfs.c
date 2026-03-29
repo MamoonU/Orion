@@ -238,8 +238,193 @@ static int procfs_uptime_read(vnode_t *v, void *buf, uint32_t len, uint32_t off)
     return (int)n;
 }
 
+// vfs_ops for per-file vnodes
+static vfs_ops_t status_ops = { .read = procfs_status_read };
+static vfs_ops_t mem_ops    = { .read = procfs_mem_read    };
+static vfs_ops_t fd_ops     = { .read = procfs_fd_read     };
+static vfs_ops_t ns_ops     = { .read = procfs_ns_read     };
+static vfs_ops_t uptime_ops = { .read = procfs_uptime_read };
 
+// PID directory design: dynamic lookup and readdir
+static const char *pid_entries[] = { "status", "mem", "fd", "ns" };
 
+// file type mapping: link name -> file types
+static const uint8_t pid_ftypes[] = {
+    PROC_FILE_STATUS, PROC_FILE_MEM, PROC_FILE_FD, PROC_FILE_NS
+};
 
+// ops mapping: link names -> behaviour
+static vfs_ops_t *pid_ops_table[] = {
+    &status_ops, &mem_ops, &fd_ops, &ns_ops
+};
+
+#define PID_ENTRY_COUNT 4
+
+// PID directory tag
+typedef struct {
+    uint16_t pid;
+} procfs_piddir_tag_t;
+
+// PID directory lookup
+static int piddir_lookup(vnode_t *dir, const char *name, vnode_t **out) {
+
+    procfs_piddir_tag_t *dt = (procfs_piddir_tag_t *)dir->data;
+    pcb_t *p = proc_get((pid_t)dt->pid);
+    if (!p) return -1;
+
+    for (int i = 0; i < PID_ENTRY_COUNT; i++) {
+        if (strcmp(name, pid_entries[i]) != 0) continue;                    // match file name
+
+        procfs_tag_t *tag = (procfs_tag_t *)kmalloc(sizeof(procfs_tag_t));  // create file tag
+        if (!tag) return -1;
+        tag->pid   = dt->pid;
+        tag->ftype = pid_ftypes[i];
+
+        vnode_t *v = vnode_alloc(VNODE_DEV, pid_ops_table[i], tag);         // create vnode
+        if (!v) { kfree(tag); return -1; }
+
+        *out = v;                                                           // return
+        return 0;
+    }
+    return -1;
+}
+
+static int piddir_readdir(vnode_t *dir, uint32_t index, char *name_out, vnode_t **node_out) {
+
+    procfs_piddir_tag_t *dt = (procfs_piddir_tag_t *)dir->data;
+    if (!proc_get((pid_t)dt->pid)) return -1;
+    if (index >= PID_ENTRY_COUNT) return -1;
+
+    if (name_out)
+        strncpy(name_out, pid_entries[index], VFS_NAME_MAX - 1);            // return name
+    if (node_out) {
+        vnode_t *dummy = 0;
+        piddir_lookup(dir, pid_entries[index], &dummy);                     // optionally return node
+        *node_out = dummy;
+    }
+    return 0;
+}
+
+// directory operations
+static vfs_ops_t piddir_ops = {
+    .lookup  = piddir_lookup,
+    .readdir = piddir_readdir,
+};
+
+// create PID directory vnode for process pid: create /proc/<pid>
+static vnode_t *make_pid_dir(uint16_t pid) {
+
+    procfs_piddir_tag_t *tag = (procfs_piddir_tag_t *)kmalloc(sizeof(procfs_piddir_tag_t));
+    if (!tag) return 0;
+    tag->pid = pid;                                                                             // attach PID -> directory
+
+    vnode_t *v = vnode_alloc(VNODE_DIR, &piddir_ops, tag);                                      // create vnode
+    if (!v) { kfree(tag); return 0; }
+    return v;
+}
+
+// parse PID = decimal string -> uint16
+static int parse_pid(const char *s, uint16_t *out) {
+
+    if (!s || !*s) return 0;                    // reject null/empty string
+
+    uint32_t n = 0;                             // 32-bit accumulator
+
+    while (*s) {                                // digit loop
+        if (*s < '0' || *s > '9') return 0;     // ensure numeric chars
+        n = n * 10 + (uint32_t)(*s - '0');      // decimal parsing
+        if (n > 0xFFFEu) return 0;
+        s++;
+    }
+    *out = (uint16_t)n;
+    return 1;
+}
+
+// process root lookup: resolve /proc/<name>
+static int procroot_lookup(vnode_t *dir, const char *name, vnode_t **out) {
+
+    (void)dir;
+
+    // "uptime" = special file
+    if (strcmp(name, "uptime") == 0) {
+        vnode_t *v = vnode_alloc(VNODE_DEV, &uptime_ops, 0);    // create vnode
+        if (!v) return -1;
+        *out = v;
+        return 0;
+    }
+
+    uint16_t pid;
+    if (!parse_pid(name, &pid)) return -1;                      // parse pid
+
+    pcb_t *p = proc_get((pid_t)pid);                            // validate process
+    if (!p) return -1;
+
+    vnode_t *v = make_pid_dir(pid);                             // create pid directory
+    if (!v) return -1;
+    *out = v;
+    return 0;
+}
+
+// process root read directory: list /proc
+static int procroot_readdir(vnode_t *dir, uint32_t index, char *name_out, vnode_t **node_out) {
+
+    (void)dir;
+
+    uint32_t found = 0;
+    for (uint16_t pid = 0; pid < MAX_PROCS; pid++) {                // iterate process table
+
+        pcb_t *p = proc_get((pid_t)pid);                            // skip unused
+        if (!p) continue;
+
+        if (found == index) {                                       // match index
+            if (name_out) {
+                char tmp[8]; pid_to_str(pid, tmp, sizeof(tmp));
+                strncpy(name_out, tmp, VFS_NAME_MAX - 1);           // return PID name
+            }
+            if (node_out) *node_out = make_pid_dir(pid);            // create directory node
+            return 0;
+        }
+        found++;                                                    // increment
+    }
+
+    // after all PIDs: "uptime"
+    if (found == index) {
+        if (name_out) strncpy(name_out, "uptime", VFS_NAME_MAX - 1);
+        if (node_out) *node_out = vnode_alloc(VNODE_DEV, &uptime_ops, 0);   // return uptime
+        return 0;
+    }
+
+    return -1;
+}
+
+// process root operations
+static vfs_ops_t procroot_ops = {
+    .lookup  = procroot_lookup,
+    .readdir = procroot_readdir,
+};
+
+// initialisation: mount /proc
+void procfs_init(void) {
+
+    kprintf("PROCFS: Initialising\n");
+
+    vnode_t *root = vnode_alloc(VNODE_DIR, &procroot_ops, 0);               // create root vnode
+    if (!root) {
+        kprintf("PROCFS: FATAL — could not allocate root vnode\n");
+        return;
+    }
+
+    if (vfs_mkdir("/proc") < 0) {                                           // create directory in VFS
+        kprintf("PROCFS: FATAL — could not create /proc\n");
+        return;
+    }
+
+    if (ramfs_register_dev("/proc", root) < 0) {                            // replace ramfs stub directory with our dynamic root
+        kprintf("PROCFS: FATAL — could not register /proc\n");
+        return;
+    }
+
+    kprintf("PROCFS: /proc ready  (dynamic PID lookup + /proc/uptime)\n");
+}
 
 
