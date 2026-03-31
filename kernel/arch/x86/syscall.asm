@@ -24,7 +24,7 @@
 
 extern syscall_dispatch         ; syscall.c
 extern sched_switch_esp         ; sched.c
-extern proc_deliver_signals     ; proc.c — check + deliver pending signals before iret
+extern proc_deliver_signals     ; proc.c - check + deliver pending signals before iret
 
 global syscall_entry
 syscall_entry:

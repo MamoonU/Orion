@@ -60,7 +60,7 @@ int vfs_mount(const char *path, vnode_t *root) {
     if (!path || !root) return -1;
 
     if (mount_count >= VFS_MOUNT_MAX) {                                     // limit mounts
-        kprintf("VFS: vfs_mount — mount table full\n");
+        kprintf("VFS: vfs_mount - mount table full\n");
         return -1;
     }
 
@@ -144,6 +144,34 @@ vnode_t *vfs_resolve(const char *path) {
     return cur;
 }
 
+// internal: open vnode with path recorded on the file object
+file_t *vfs_open_vnode_at(vnode_t *v, int flags, const char *path) {
+
+    if (!v) return 0;
+
+    if (v->ops && v->ops->open) {
+        if (v->ops->open(v, flags) < 0) return 0;
+    }
+
+    file_t *f = kmalloc(sizeof(file_t));
+    if (!f) return 0;
+
+    f->vnode    = v;
+    f->offset   = (flags & O_APPEND) ? v->size : 0;
+    f->flags    = (uint32_t)flags;
+    f->refcount = 1;
+
+    if (path) {
+        strncpy(f->path, path, VFS_PATH_MAX - 1);
+        f->path[VFS_PATH_MAX - 1] = '\0';
+    } else {
+        f->path[0] = '\0';
+    }
+
+    vnode_ref(v);
+    return f;
+}
+
 // convert vnode -> open file object
 file_t *vfs_open_vnode(vnode_t *v, int flags) {
 
@@ -198,10 +226,9 @@ file_t *vfs_open(const char *path, int flags) {
         if (dir->ops->create(dir, filename, VNODE_FILE, &newfile) < 0 || !newfile)          // create vnode
             return 0;
 
-        return vfs_open_vnode(newfile, flags);
-
+        return vfs_open_vnode_at(newfile, flags, path);
     }
-    return vfs_open_vnode(v, flags);
+    return vfs_open_vnode_at(v, flags, path);
 }
 
 // close vnode
@@ -296,12 +323,10 @@ int vfs_readdir(file_t *f, uint32_t index, char *name_out, uint32_t name_max, vn
     return 0;
 }
 
-// Normalise an absolute path string in-place.
-// Collapses redundant slashes, resolves '.' and '..' components.
-// path must be a writable buffer of at least VFS_PATH_MAX bytes.
+// Normalise an absolute path string in-place
 static void path_normalise(char *path) {
  
-    // component pointer array — points into a scratch copy
+    // component pointer array - points into a scratch copy
     char scratch[VFS_PATH_MAX];
     strncpy(scratch, path, VFS_PATH_MAX - 1);
     scratch[VFS_PATH_MAX - 1] = '\0';
@@ -350,19 +375,17 @@ static void path_normalise(char *path) {
     }
 }
 
-// Resolve a path relative to base, producing a normalised absolute path in out.
-// If path is already absolute the base is ignored.
-// out must point to a VFS_PATH_MAX byte buffer.
+// Resolve a path relative to base, producing a normalised absolute path in out
 void vfs_path_resolve(const char *base, const char *path, char *out) {
  
     if (!path || !out) return;
  
     if (path[0] == '/') {
-        // absolute input — just copy and normalise
+        // absolute input - just copy and normalise
         strncpy(out, path, VFS_PATH_MAX - 1);
         out[VFS_PATH_MAX - 1] = '\0';
     } else {
-        // relative input — prepend base
+        // relative input - prepend base
         strncpy(out, base ? base : "/", VFS_PATH_MAX - 1);
         out[VFS_PATH_MAX - 1] = '\0';
  

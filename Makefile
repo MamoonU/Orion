@@ -10,7 +10,7 @@ GRUB := grub-mkrescue
 # kernel: can see all kernel headers
 CFLAGS   := -ffreestanding -O2 -Wall -Wextra -I include
 
-# liborion: freestanding userspace — must NOT see kernel headers
+# liborion: freestanding userspace - must NOT see kernel headers
 UFLAGS   := -ffreestanding -O2 -Wall -Wextra -I lib/liborion \
             -fno-builtin -nostdlib
 
@@ -117,7 +117,7 @@ USER_SH_ELF   := user/sh/sh.elf
 USER_SH_BIN_O := user/sh/sh_bin.o
 
 # ─────────────────────────────────────────────────────────────
-# liborion — userspace runtime static library
+# liborion - userspace runtime static library
 # ─────────────────────────────────────────────────────────────
 LIBORION_OBJS := \
 	lib/liborion/syscall.lo    \
@@ -148,7 +148,7 @@ $(LIBORION): $(LIBORION_OBJS)
 	@$(AR) rcs $@ $^
 
 # ─────────────────────────────────────────────────────────────
-# user shell — must depend on liborion
+# user shell - must depend on liborion
 # ─────────────────────────────────────────────────────────────
 $(USER_SH_ELF): $(USER_SH_SRC) $(LIBORION) $(USER_SH_LD)
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
@@ -226,8 +226,23 @@ clean:
 	       $(USER_SH_ELF) $(USER_SH_BIN_O) myos myos.iso
 	@rm -rf isodir
 
+# Single instance - general dev
 run:
-	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
-	@echo "┃                             QEMU                                  ┃"
-	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
-	@qemu-system-x86_64 -cdrom myos.iso -serial stdio -no-reboot
+	@qemu-system-i386 \
+		-cdrom myos.iso \
+		-serial stdio \
+		-no-reboot \
+		-netdev user,id=net0 \
+		-device virtio-net-pci,netdev=net0
+
+QEMU_FLAGS := -cdrom myos.iso -serial stdio -no-reboot -m 128M
+
+run-a:
+	@qemu-system-i386 $(QEMU_FLAGS) \
+		-netdev socket,id=net0,listen=:1234 \
+		-device virtio-net-pci,netdev=net0,mac=52:54:00:00:00:0A
+
+run-b:
+	@qemu-system-i386 $(QEMU_FLAGS) \
+		-netdev socket,id=net0,connect=127.0.0.1:1234 \
+		-device virtio-net-pci,netdev=net0,mac=52:54:00:00:00:0B

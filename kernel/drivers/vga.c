@@ -1,4 +1,4 @@
-// drivers/vga.c — VGA text mode (80x25) driver
+// drivers/vga.c - VGA text mode (80x25) driver
 
 #include "vga.h"
 #include "string.h"

@@ -70,9 +70,9 @@ static int vga_write_op(vnode_t *v, const void *buf, uint32_t len, uint32_t offs
                 uint32_t seq_len = j - (i + 2);
                 const char *arg = src + i + 2;
                 if (cmd == 'J' && seq_len == 1 && arg[0] == '2')
-                    terminal_clear();       // \033[2J — erase display
+                    terminal_clear();       // \033[2J - erase display
                 else if (cmd == 'H' && seq_len == 0)
-                    terminal_set_cursor(0, 0);  // \033[H  — cursor home
+                    terminal_set_cursor(0, 0);  // \033[H  - cursor home
                 i = j + 1;
                 continue;
             }
@@ -192,7 +192,7 @@ void devfs_init(void) {
     kprintf("DEVFS: Initialising\n");
 
     if (vfs_mkdir("/dev") < 0) {                                            // create /dev directory inside ramfs
-        kprintf("DEVFS: FATAL — could not create /dev\n");
+        kprintf("DEVFS: FATAL - could not create /dev\n");
         return;
     }
 
@@ -204,7 +204,7 @@ void devfs_init(void) {
     g_random = vnode_alloc(VNODE_DEV, &random_ops, 0);
 
     if (!g_stdin || !g_stdout || !g_stderr || !g_null  || !g_zero   || !g_random) {     // OOM protection
-        kprintf("DEVFS: FATAL — OOM allocating device vnodes\n");
+        kprintf("DEVFS: FATAL - OOM allocating device vnodes\n");
         return;
     }
 

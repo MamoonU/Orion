@@ -95,8 +95,6 @@ static void sh_print_prompt(void) {
     sh_write(" $ ");                            // orion:/net/tcp $
 }
 
-// builtins
-
 // list builtin commands with descriptions
 static void builtin_help(void) {
     sh_write("\nOrion Shell [ring-3] built-in commands:\n");
@@ -108,12 +106,16 @@ static void builtin_help(void) {
     sh_write("  cat <file>         print file contents\n");
     sh_write("  clear              clear screen\n");
     sh_write("  ps                 list processes (stub)\n");
+    sh_write("  write <path> <data...>    write string to file (creates if needed)\n");
+    sh_write("  open <path>               open file; prints slot number for clone files\n");
     sh_write("  bind [-b|-a] <src> <dst>  bind src into namespace at dst\n");
     sh_write("                            -b = before (union prepend)\n");
     sh_write("                            -a = after  (union append)\n");
     sh_write("                            default = replace\n");
     sh_write("  unbind <dst>              remove all bindings at dst\n");
     sh_write("  nsdump                    dump this process namespace\n");
+    sh_write("  mount [-b|-a] <ip!port> <path>  dial PULSAR server + mount\n");
+    sh_write("                            e.g. mount 192.168.1.2!564 /remote\n");
     sh_write("  exit [code]               exit shell\n");
 }
 
@@ -271,6 +273,83 @@ static void builtin_ps(void) {
     close(fd);                                                                      // close
 }
 
+// write <path> <data...> = write string to file, creating it if it does not exist
+static void builtin_write(int argc, char **argv) {
+
+    if (argc < 3) {
+        sh_write("usage: write <path> <data...>\n");
+        return;
+    }
+
+    // join argv[2..] into one buffer, space-separated
+    char data[SH_LINE_MAX];
+    uint32_t pos = 0;
+    for (int i = 2; i < argc && pos < sizeof(data) - 1; i++) {
+        if (i > 2 && pos < sizeof(data) - 1) data[pos++] = ' ';
+        const char *s = argv[i];
+        while (*s && pos < sizeof(data) - 1) data[pos++] = *s++;
+    }
+    data[pos] = '\0';
+
+    // strip surrounding double-quotes: write /net/ipifc/0/ctl "add 192.168.1.1 ..."
+    char *dp   = data;
+    uint32_t dl = pos;
+    if (dl >= 2 && dp[0] == '"' && dp[dl - 1] == '"') {
+        dp[dl - 1] = '\0';
+        dp++;
+        dl -= 2;
+    }
+
+    // open existing device/file for writing; fall back to create for regular files
+    int fd = open(argv[1], O_WRONLY);
+    if (fd < 0) fd = open(argv[1], O_WRONLY | O_CREAT);
+    if (fd < 0) {
+        sh_write("write: cannot open: ");
+        sh_write(argv[1]);
+        sh_putchar('\n');
+        return;
+    }
+
+    uint32_t wlen = (dl > 0) ? dl : (uint32_t)strlen(dp);
+    int n = write(fd, dp, wlen);
+    close(fd);
+
+    if (n < 0) {
+        sh_write("write: write failed\n");
+    }
+}
+
+// open <path> = open file and print any immediate response
+static void builtin_open(int argc, char **argv) {
+
+    if (argc < 2) {
+        sh_write("usage: open <path>\n");
+        return;
+    }
+
+    // try read-write first (clone files need to return data); fall back read-only
+    int fd = open(argv[1], O_RDWR);
+    if (fd < 0) fd = open(argv[1], O_RDONLY);
+    if (fd < 0) {
+        sh_write("open: cannot open: ");
+        sh_write(argv[1]);
+        sh_putchar('\n');
+        return;
+    }
+
+    // read response: clone files return the allocated slot number as a decimal string
+    char buf[32];
+    int n = read(fd, buf, (uint32_t)(sizeof(buf) - 1));
+    close(fd);
+
+    if (n > 0) {
+        buf[n] = '\0';
+        sh_write("slot: ");
+        sh_write(buf);
+        if (buf[n - 1] != '\n') sh_putchar('\n');
+    }   // n == 0 is fine: ctl/data files have nothing to say on open
+}
+
 // bind [-b|-a] <src> <dst> = bind src into namespace at dst
 static void builtin_bind(int argc, char **argv) {
 
@@ -316,6 +395,50 @@ static void builtin_unbind(int argc, char **argv) {
     }
 }
 
+// dial a remote PULSAR server over TCP and bind it into the namespace
+static void builtin_mount(int argc, char **argv) {
+ 
+    if (argc < 3) {
+        sh_write("usage: mount [-b|-a] <ip!port> <path>\n");
+        sh_write("       -b  bind before (union prepend)\n");
+        sh_write("       -a  bind after  (union append)\n");
+        sh_write("       default: replace\n");
+        sh_write("example: mount 192.168.1.2!564 /remote\n");
+        return;
+    }
+ 
+    uint8_t     flags    = NS_BIND_REPLACE;
+    const char *addr_arg = argv[1];
+    const char *path_arg = argv[2];
+ 
+    if (argv[1][0] == '-') {                                                // flag parsing
+        if      (argv[1][1] == 'b') flags = NS_BIND_BEFORE;
+        else if (argv[1][1] == 'a') flags = NS_BIND_AFTER;
+        else {
+            sh_write("mount: unknown flag (use -b or -a)\n");
+            return;
+        }
+        if (argc < 4) { sh_write("mount: missing arguments\n"); return; }
+        addr_arg = argv[2];
+        path_arg = argv[3];
+    }
+ 
+    sh_write("mount: dialling ");
+    sh_write(addr_arg);
+    sh_write(" ...\n");
+ 
+    if (dial(addr_arg, path_arg, flags) < 0) {                              // dial syscall
+        sh_write("mount: failed to connect to ");
+        sh_write(addr_arg);
+        sh_putchar('\n');
+    } else {
+        sh_write("mount: ");
+        sh_write(addr_arg);
+        sh_write(" -> ");
+        sh_write(path_arg);
+        sh_putchar('\n');
+    }
+}
 
 static const char *g_exec_path = 0;             // shared variable between parent & child: set by sh_exec before fork
 
@@ -371,9 +494,12 @@ static void sh_dispatch(int argc, char **argv) {
     else if (strcmp(argv[0], "cat"    ) == 0) builtin_cat(argc, argv);
     else if (strcmp(argv[0], "clear"  ) == 0) builtin_clear();
     else if (strcmp(argv[0], "ps"     ) == 0) builtin_ps();
+    else if (strcmp(argv[0], "write"  ) == 0) builtin_write(argc, argv);
+    else if (strcmp(argv[0], "open"   ) == 0) builtin_open(argc, argv);
     else if (strcmp(argv[0], "bind"   ) == 0) builtin_bind(argc, argv);
     else if (strcmp(argv[0], "unbind" ) == 0) builtin_unbind(argc, argv);
     else if (strcmp(argv[0], "nsdump" ) == 0) nsdump();
+    else if (strcmp(argv[0], "mount"  ) == 0) builtin_mount(argc, argv);
     else if (strcmp(argv[0], "exit"   ) == 0) {
         int code = (argc >= 2) ? atoi(argv[1]) : 0;
         _exit(code);                                            // terminate shell
@@ -390,17 +516,66 @@ int main(int argc, char **argv) {
     signal(SIGINT, SIG_IGN);                                    // shell ignores SIGINT: only foreground children die on Ctrl+C
 
     sh_write(
+    // "\n"
+    // "_______/\\\\\\\\\\___________________________________________________________\n"
+    // " _____/\\\\\\///\\\\\\_________________________________________________________\n"
+    // "  ___/\\\\\\/__\\///\\\\\\_______________________________________________________\n"
+    // "   __/\\\\\\______\\//\\\\\\______________________________________________________\n"
+    // "    _\\/\\\\\\_______\\/\\\\\\______________________________________________________\n"
+    // "     _\\//\\\\\\______/\\\\\\_______________________________________________________\n"
+    // "      __\\///\\\\\\__/\\\\\\_________________________________________________________\n"
+    // "       ____\\///\\\\\\\\\\/__________________________________________________________\n"
+    // "        ______\\/////____________________________________________________________\n"
+    // "\n"
+
+    // "\n"
+    // "_______/\\\\\\\\\\___________________________________________________________\n"
+    // " _____/\\\\\\///\\\\\\_________________________________________________________\n"
+    // "  ___/\\\\\\/__\\///\\\\\\_______________________________________________________\n"
+    // "   __/\\\\\\______\\//\\\\\\__/\\\\/\\\\\\\\\\\\\\_________________________________________\n"
+    // "    _\\/\\\\\\_______\\/\\\\\\_\\/\\\\\\/////\\\\\\________________________________________\n"
+    // "     _\\//\\\\\\______/\\\\\\__\\/\\\\\\___\\///_________________________________________\n"
+    // "      __\\///\\\\\\__/\\\\\\____\\/\\\\\\________________________________________________\n"
+    // "       ____\\///\\\\\\\\\\/_____\\/\\\\\\________________________________________________\n"
+    // "        ______\\/////_______\\///_________________________________________________\n"
+    // "\n"
+
+    // "\n"
+    // "_______/\\\\\\\\\\___________________________________________________________\n"
+    // " _____/\\\\\\///\\\\\\_________________________________________________________\n"
+    // "  ___/\\\\\\/__\\///\\\\\\_________________/\\\\\\__________________________________\n"
+    // "   __/\\\\\\______\\//\\\\\\__/\\\\/\\\\\\\\\\\\\\__\\///___________________________________\n"
+    // "    _\\/\\\\\\_______\\/\\\\\\_\\/\\\\\\/////\\\\\\__/\\\\\\__________________________________\n"
+    // "     _\\//\\\\\\______/\\\\\\__\\/\\\\\\___\\///__\\/\\\\\\__________________________________\n"
+    // "      __\\///\\\\\\__/\\\\\\____\\/\\\\\\_________\\/\\\\\\__________________________________\n"
+    // "       ____\\///\\\\\\\\\\/_____\\/\\\\\\_________\\/\\\\\\__________________________________\n"
+    // "        ______\\/////_______\\///__________\\///___________________________________\n"
+    // "\n"
+    
+    // "\n"
+    // "_______/\\\\\\\\\\___________________________________________________________\n"
+    // " _____/\\\\\\///\\\\\\_________________________________________________________\n"
+    // "  ___/\\\\\\/__\\///\\\\\\_________________/\\\\\\__________________________________\n"
+    // "   __/\\\\\\______\\//\\\\\\__/\\\\/\\\\\\\\\\\\\\__\\///______/\\\\\\\\\\_______________________\n"
+    // "    _\\/\\\\\\_______\\/\\\\\\_\\/\\\\\\/////\\\\\\__/\\\\\\___/\\\\\\///\\\\\\_____________________\n"
+    // "     _\\//\\\\\\______/\\\\\\__\\/\\\\\\___\\///__\\/\\\\\\__/\\\\\\__\\//\\\\\\____________________\n"
+    // "      __\\///\\\\\\__/\\\\\\____\\/\\\\\\_________\\/\\\\\\_\\//\\\\\\__/\\\\\\_____________________\n"
+    // "       ____\\///\\\\\\\\\\/_____\\/\\\\\\_________\\/\\\\\\__\\///\\\\\\\\\\/______________________\n"
+    // "        ______\\/////_______\\///__________\\///_____\\/////________________________\n"
+    // "\n"
+
     "\n"
-    "_______/\\\\\\\\\\______________________________________________________        \n"
-    " _____/\\\\\\///\\\\\\____________________________________________________       \n"
-    "  ___/\\\\\\/__\\///\\\\\\_________________/\\\\\\_____________________________      \n"
-    "   __/\\\\\\______\\//\\\\\\__/\\\\/\\\\\\\\\\\\\\__\\///______/\\\\\\\\\\_____/\\\\/\\\\\\\\\\\\___     \n"
-    "    _\\/\\\\\\_______\\/\\\\\\_\\/\\\\\\/////\\\\\\__/\\\\\\___/\\\\\\///\\\\\\__\\/\\\\\\////\\\\\\__    \n"
-    "     _\\//\\\\\\______/\\\\\\__\\/\\\\\\___\\///__\\/\\\\\\__/\\\\\\__\\//\\\\\\_\\/\\\\\\__\\//\\\\\\_   \n"
-    "      __\\///\\\\\\__/\\\\\\____\\/\\\\\\_________\\/\\\\\\_\\//\\\\\\__/\\\\\\__\\/\\\\\\___\\/\\\\\\_  \n"
-    "       ____\\///\\\\\\\\\\/_____\\/\\\\\\_________\\/\\\\\\__\\///\\\\\\\\\\/___\\/\\\\\\___\\/\\\\\\_ \n"
-    "        ______\\/////_______\\///__________\\///_____\\/////_____\\///____\\///__\n"
+    "_______/\\\\\\\\\\___________________________________________________________\n"
+    " _____/\\\\\\///\\\\\\_________________________________________________________\n"
+    "  ___/\\\\\\/__\\///\\\\\\___________________/\\\\\\________________________________\n"
+    "   __/\\\\\\______\\//\\\\\\___/\\\\/\\\\\\\\\\\\\\___\\///_______/\\\\\\\\\\______/\\\\/\\\\\\\\\\\\____\n"
+    "    _\\/\\\\\\_______\\/\\\\\\__\\/\\\\\\/////\\\\\\___/\\\\\\____/\\\\\\///\\\\\\___\\/\\\\\\////\\\\\\___\n"
+    "     _\\//\\\\\\______/\\\\\\___\\/\\\\\\___\\///___\\/\\\\\\___/\\\\\\__\\//\\\\\\__\\/\\\\\\__\\//\\\\\\__\n"
+    "      __\\///\\\\\\__/\\\\\\_____\\/\\\\\\__________\\/\\\\\\__\\//\\\\\\__/\\\\\\___\\/\\\\\\___\\/\\\\\\__\n"
+    "       ____\\///\\\\\\\\\\/______\\/\\\\\\__________\\/\\\\\\___\\///\\\\\\\\\\/____\\/\\\\\\___\\/\\\\\\__\n"
+    "        ______\\/////________\\///___________\\///______\\/////______\\///____\\///___\n"
     "\n"
+    
     "Orion Shell [ring-3] - type 'help' for commands\n"
     );
 

@@ -1,4 +1,4 @@
-// drivers/serial.c — UART COM1 serial driver
+// drivers/serial.c - UART COM1 serial driver
 //
 // Used for all kernel debug output. At 115200 baud, COM1 is fast
 // enough that serial_write() does not meaningfully stall the kernel.

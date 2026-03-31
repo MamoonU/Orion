@@ -27,7 +27,7 @@ static err_t orion_linkoutput(struct netif *netif, struct pbuf *p) {
 
     for (struct pbuf *q = p; q != NULL; q = q->next) {                          // walk chain
         if ((uint32_t)total + q->len > sizeof(tx_flat)) {                       // overflow protection
-            kprintf("LWIP: TX frame too large (%u B) — dropped\n", (uint32_t)total + q->len);
+            kprintf("LWIP: TX frame too large (%u B) - dropped\n", (uint32_t)total + q->len);
             return ERR_MEM;
         }
         memcpy(tx_flat + total, q->payload, q->len);                            // copy each chunk -> tx_flat
@@ -68,7 +68,7 @@ static void orion_rx(const void *data, uint32_t len) {
 
     struct pbuf *p = pbuf_alloc(PBUF_RAW, (u16_t)len, PBUF_POOL);           // alloc packet buffer
     if (!p) {
-        kprintf("LWIP: RX pbuf_alloc failed (len=%u) — dropped\n", len);
+        kprintf("LWIP: RX pbuf_alloc failed (len=%u) - dropped\n", len);
         return;
     }
 
@@ -80,7 +80,7 @@ static void orion_rx(const void *data, uint32_t len) {
     }
 
     if (orion_netif.input(p, &orion_netif) != ERR_OK) {                     // ethernet_input() handles ARP and routes IP packets up stack
-        kprintf("LWIP: netif.input error — dropping frame\n");
+        kprintf("LWIP: netif.input error - dropping frame\n");
         pbuf_free(p);
     }
 }
@@ -105,13 +105,31 @@ static void orion_status_cb(struct netif *netif) {
 }
 #endif
 
+#define DHCP_TIMEOUT_TICKS  500   // 5 seconds at 100Hz
+
+static uint32_t dhcp_start_tick = 0;
+
+// drives DHCP, TCP retransmit, ARP expiry, etc. (called on every timer tick)
+void lwip_orion_poll(void) {
+    sys_check_timeouts();
+
+    // if DHCP hasn't assigned an IP after 5 seconds, give up
+    if (dhcp_start_tick && ip4_addr_isany(netif_ip4_addr(&orion_netif))) {
+        if (timer_get_ticks() - dhcp_start_tick > DHCP_TIMEOUT_TICKS) {
+            dhcp_stop(&orion_netif);
+            dhcp_start_tick = 0;
+            kprintf("LWIP: DHCP timed out — configure via /net/ipifc/0/ctl\n");
+        }
+    }
+}
+
 // full initialisation
 void lwip_orion_init(void) {
 
-    ip4_addr_t ip, mask, gw;        // zero IP config (DHCP will fill in)
-    IP4_ADDR(&ip,   0, 0, 0, 0);
-    IP4_ADDR(&mask, 0, 0, 0, 0);
-    IP4_ADDR(&gw,   0, 0, 0, 0);
+    ip4_addr_t ip, mask, gw;
+    ip4_addr_set_zero(&ip);
+    ip4_addr_set_zero(&mask);
+    ip4_addr_set_zero(&gw);
 
     lwip_init();                    // initialise all lwIP subsystems
 
@@ -129,15 +147,12 @@ void lwip_orion_init(void) {
 
     netif_set_default(&orion_netif);
     netif_set_up(&orion_netif);             // bring interface up
+    netif_set_link_up(&orion_netif);
 
     virtio_net_set_rx_callback(orion_rx);   // connect RX IRQ path
 
     dhcp_start(&orion_netif);               // request an IP from the router
+    dhcp_start_tick = timer_get_ticks();
 
-    kprintf("LWIP: stack ready — DHCP started\n");
-}
-
-// drives DHCP, TCP retransmit, ARP expiry, etc. (called on every timer tick)
-void lwip_orion_poll(void) {
-    sys_check_timeouts();
+    kprintf("LWIP: stack ready - DHCP started\n");
 }

@@ -33,6 +33,7 @@
 #define SYS_SIGNAL      22
 #define SYS_SIGRETURN   23
 #define SYS_KILL        24
+#define SYS_DIAL        25
 
 // open flags (from vfs.h)
 #define O_RDONLY    0x00
@@ -137,6 +138,7 @@ int     bind   (const char *src, const char *dst, uint8_t flags);           // m
 int     unbind (const char *dst);                                           // remove binding
 void    nsdump (void);                                                      // debug: print namespace
 int     mount  (int srv_fd, const char *path, uint8_t flags);               // mount PULSAR server
+int     dial   (const char *addr, const char *path, uint8_t flags);         // dial TCP PULSAR server + mount
 
 // heap
 void   *sbrk   (int increment);                     // extend process heap

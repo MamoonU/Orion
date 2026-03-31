@@ -39,7 +39,7 @@ typedef enum {
 } proc_state_t;
 
 // lower the number, higher the prio
-#define PROC_PRIO_REALTIME   0              // hard real-time — never preempted by lower
+#define PROC_PRIO_REALTIME   0              // hard real-time - never preempted by lower
 #define PROC_PRIO_HIGH       8              // interactive / high-priority system tasks
 #define PROC_PRIO_NORMAL    16              // default for all user processes
 #define PROC_PRIO_LOW       24              // background / batch work

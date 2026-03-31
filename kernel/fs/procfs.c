@@ -410,17 +410,17 @@ void procfs_init(void) {
 
     vnode_t *root = vnode_alloc(VNODE_DIR, &procroot_ops, 0);               // create root vnode
     if (!root) {
-        kprintf("PROCFS: FATAL — could not allocate root vnode\n");
+        kprintf("PROCFS: FATAL - could not allocate root vnode\n");
         return;
     }
 
     if (vfs_mkdir("/proc") < 0) {                                           // create directory in VFS
-        kprintf("PROCFS: FATAL — could not create /proc\n");
+        kprintf("PROCFS: FATAL - could not create /proc\n");
         return;
     }
 
     if (ramfs_register_dev("/proc", root) < 0) {                            // replace ramfs stub directory with our dynamic root
-        kprintf("PROCFS: FATAL — could not register /proc\n");
+        kprintf("PROCFS: FATAL - could not register /proc\n");
         return;
     }
 

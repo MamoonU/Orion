@@ -79,7 +79,7 @@ void pmm_init(multiboot_info_t *mbi, uint32_t kernel_phys_start, uint32_t kernel
 
     if (!(mbi->flags & MULTIBOOT_FLAG_MMAP)) {      // if no GRUB mmap
 
-        kprintf("PMM: FATAL ERROR — GRUB did not provide a memory map\n");
+        kprintf("PMM: FATAL ERROR - GRUB did not provide a memory map\n");
 
         if (mbi->flags & MULTIBOOT_FLAG_MEM) {                                  // fallback assuming memory up to mem_upper is free
             kprintf("PMM: Falling back to mem_upper field\n");
@@ -195,7 +195,7 @@ void pmm_free_frame(uint32_t phys_addr) {
     if (frame == 0) return;                                                             // protect frame 0
 
     if (!bitmap_test(frame)) {                                          // detect double free errors
-        kprintf("PMM: WARNING — double-free of frame %p\n", phys_addr);
+        kprintf("PMM: WARNING - double-free of frame %p\n", phys_addr);
         return;
     }
 
@@ -245,7 +245,7 @@ uint32_t pmm_alloc_contiguous(uint32_t n) {
         }
     }
 
-    kprintf("PMM: pmm_alloc_contiguous(%u) — no contiguous region found\n", n);
+    kprintf("PMM: pmm_alloc_contiguous(%u) - no contiguous region found\n", n);
     return 0;
 }
 

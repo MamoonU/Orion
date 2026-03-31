@@ -349,6 +349,7 @@ int virtio_net_init(void) {
 
     // 9. register IRQ
     irq_install_handler(pci.irq_line, virtio_net_irq);
+    irq_unmask(pci.irq_line);                                       // enable it at the PIC
     kprintf("VIRTIO-NET: IRQ %u registered\n", pci.irq_line);
 
     // 10. set DRIVER_OK: device is now live

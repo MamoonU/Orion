@@ -1,4 +1,4 @@
-// kernel/panic.c — unrecoverable kernel error handler
+// kernel/panic.c - unrecoverable kernel error handler
 
 #include "panic.h"
 #include "serial.h"

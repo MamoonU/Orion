@@ -1,10 +1,10 @@
-// kernel/arch/x86/tss.c — Task State Segment initialisation
+// kernel/arch/x86/tss.c - Task State Segment initialisation
 
 // wires into the system:
-//   1. tss_init()         — called from kernel_main, after gdt_init()
-//   2. gdt_install_tss()  — writes a TSS descriptor into GDT[5]
-//   3. tss_flush()        — executes "ltr 0x28" to load the Task Register
-//   4. tss_set_esp0()     — called by the scheduler on every context switch
+//   1. tss_init()         - called from kernel_main, after gdt_init()
+//   2. gdt_install_tss()  - writes a TSS descriptor into GDT[5]
+//   3. tss_flush()        - executes "ltr 0x28" to load the Task Register
+//   4. tss_set_esp0()     - called by the scheduler on every context switch
 //                           to keep TSS.esp0 pointing at the new process's
 //                           kernel stack top
 

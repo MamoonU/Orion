@@ -62,7 +62,7 @@ static uint32_t *create_table(uint32_t virt, uint32_t flags) {
 
     uint32_t pt_phys = pmm_alloc_frame();                                       // allocate zeroed 4KB frame for new PT
     if (pt_phys == 0) {
-        kprintf("VMM: FATAL — out of physical memory for page table \n");
+        kprintf("VMM: FATAL - out of physical memory for page table \n");
         return 0;
     }
 
@@ -88,7 +88,7 @@ void vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
 
     uint32_t *pt = create_table(virt, flags);                                   // return page table
     if (!pt) {
-        panic("VMM: vmm_map_page — page table allocation failed");
+        panic("VMM: vmm_map_page - page table allocation failed");
     }
 
     uint32_t pt_idx = PT_INDEX(virt);                                           // construct PTE = | frame address | flags |
@@ -207,7 +207,7 @@ uint32_t vmm_create_address_space(void) {
     uint32_t pd_phys = pmm_alloc_frame();
 
     if (!pd_phys) {                                                         // OOM check
-        kprintf("VMM: vmm_create_address_space — OOM\n");
+        kprintf("VMM: vmm_create_address_space - OOM\n");
         return 0;
     }
 

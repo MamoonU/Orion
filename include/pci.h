@@ -29,7 +29,7 @@
 #define PCI_BAR5            0x24
 
 // interrupts
-#define PCI_INTERRUPT_LINE  0x3C    // 8-bit — IRQ number
+#define PCI_INTERRUPT_LINE  0x3C    // 8-bit - IRQ number
 #define PCI_INTERRUPT_PIN   0x3D    // 8-bit
 
 // PCI command register bits

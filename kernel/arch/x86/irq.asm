@@ -2,7 +2,7 @@
 
 extern irq_handler              ; irq.c
 extern sched_switch_esp         ; sched.c
-extern proc_deliver_signals     ; proc.c — check + deliver pending signals before iret
+extern proc_deliver_signals     ; proc.c - check + deliver pending signals before iret
 
 ; macro defining ISR_NOERR, 1 parameter
 %macro IRQ 1

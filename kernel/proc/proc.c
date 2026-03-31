@@ -56,7 +56,7 @@ pid_t pid_alloc(void) {
         }
     }
 
-    kprintf("PROC: pid_alloc — PID table exhausted\n");
+    kprintf("PROC: pid_alloc - PID table exhausted\n");
     return PID_INVALID;
 }
 
@@ -66,7 +66,7 @@ void pid_free(pid_t pid) {
     if (pid == PID_KERNEL || pid == PID_INVALID) return;
 
     if (!pid_bitmap_test(pid)) {
-        kprintf("PROC: pid_free — WARNING: double-free of PID %u\n", (uint32_t)pid);
+        kprintf("PROC: pid_free - WARNING: double-free of PID %u\n", (uint32_t)pid);
         return;
     }
 
@@ -79,20 +79,20 @@ pcb_t *proc_create(const char *name, uint8_t priority) {
 
     pid_t pid = pid_alloc();                                                    // alloc pid
     if (pid == PID_INVALID) {
-        kprintf("PROC: proc_create — no free PID\n");
+        kprintf("PROC: proc_create - no free PID\n");
         return 0;
     }
 
     pcb_t *p = &proc_table[pid];                                                // return pcb slot
     if (p->state != PROC_UNUSED) {
-        kprintf("PROC: proc_create — FATAL: slot not UNUSED\n");
+        kprintf("PROC: proc_create - FATAL: slot not UNUSED\n");
         pid_free(pid);
         return 0;
     }
 
     uint8_t *kstack = (uint8_t *)kmalloc_aligned(KSTACK_SIZE);                  // allocate kernel stack
     if (!kstack) {
-        kprintf("PROC: proc_create — OOM allocating kernel stack\n");
+        kprintf("PROC: proc_create - OOM allocating kernel stack\n");
         pid_free(pid);
         return 0;
     }
@@ -182,7 +182,7 @@ void proc_set_ready(pcb_t *p) {
     if (!p) return;
 
     if (p->state != PROC_EMBRYO) {
-        kprintf("PROC: proc_set_ready — not EMBRYO\n");
+        kprintf("PROC: proc_set_ready - not EMBRYO\n");
         panic("PROC: proc_set_ready called on non-EMBRYO process");
     }
 
@@ -197,7 +197,7 @@ void proc_destroy(pcb_t *p) {
     if (!p) return;
 
     if (p->state != PROC_ZOMBIE) {
-        kprintf("PROC: proc_destroy — not ZOMBIE\n");
+        kprintf("PROC: proc_destroy - not ZOMBIE\n");
         panic("PROC: proc_destroy called on non-ZOMBIE process");
     }
 
@@ -268,7 +268,7 @@ void proc_set_timeslice(pcb_t *p, uint32_t ticks) {
 void proc_init_frame(pcb_t *p, uint32_t entry_point) {
 
     if (!p || !p->kstack_top) {
-        kprintf("PROC: proc_init_frame — invalid PCB\n");
+        kprintf("PROC: proc_init_frame - invalid PCB\n");
         return;
     }
 
@@ -418,7 +418,7 @@ void proc_dump_all(void) {
 void proc_exit(int32_t exit_code) {
 
     pcb_t *p = sched_current();
-    if (!p) { kprintf("PROC: proc_exit — no current process\n"); return; }
+    if (!p) { kprintf("PROC: proc_exit - no current process\n"); return; }
 
     kprintf("PROC: [%u] \"%s\" exiting (code=%d)\n", (uint32_t)p->pid, p->name, (int)exit_code);
 
@@ -502,7 +502,7 @@ void proc_wake(pcb_t *p) {
     if (!p) return;
 
     if (p->state != PROC_BLOCKED) {
-        kprintf("PROC: proc_wake — [%u] not BLOCKED (state=%s), ignoring\n",
+        kprintf("PROC: proc_wake - [%u] not BLOCKED (state=%s), ignoring\n",
                 (uint32_t)p->pid, proc_state_name(p->state));
         return;
     }
@@ -511,7 +511,6 @@ void proc_wake(pcb_t *p) {
     p->state       = PROC_READY;
     sched_add(p);
 
-    kprintf("PROC: [%u] \"%s\" woken -> READY\n", (uint32_t)p->pid, p->name);
 }
 
 // check process -> ring-3 has pending signals

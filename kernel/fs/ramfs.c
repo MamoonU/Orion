@@ -285,14 +285,14 @@ void ramfs_init(void) {
 
     ramfs_root = ramfs_new_vnode(VNODE_DIR);                            // create root
     if (!ramfs_root) {
-        kprintf("RAMFS: FATAL — could not allocate root vnode\n");
+        kprintf("RAMFS: FATAL - could not allocate root vnode\n");
         return;
     }
 
     if (vfs_mount("/", ramfs_root) < 0) {                               // mount filesystem
-        kprintf("RAMFS: FATAL — could not mount at /\n");
+        kprintf("RAMFS: FATAL - could not mount at /\n");
         return;
     }
 
-    kprintf("RAMFS: Ready — root vnode @ %p\n", (uint32_t)ramfs_root);
+    kprintf("RAMFS: Ready - root vnode @ %p\n", (uint32_t)ramfs_root);
 }

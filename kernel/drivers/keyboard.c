@@ -9,25 +9,25 @@
 // US QWERTY scancode (UNSHIFTED)
 static const char scancode_normal[128] = {
 
-    0,                                                                          // 0x00 — unused
-    0,                                                                          // 0x01 — Escape
+    0,                                                                          // 0x00 - unused
+    0,                                                                          // 0x01 - Escape
     '1','2','3','4','5','6','7','8','9','0','-','=',
-    '\b',                                                                       // 0x0E — Backspace
-    '\t',                                                                       // 0x0F — Tab
+    '\b',                                                                       // 0x0E - Backspace
+    '\t',                                                                       // 0x0F - Tab
     'q','w','e','r','t','y','u','i','o','p','[',']',
-    '\n',                                                                       // 0x1C — Enter
-    0,                                                                          // 0x1D — Left Ctrl
+    '\n',                                                                       // 0x1C - Enter
+    0,                                                                          // 0x1D - Left Ctrl
     'a','s','d','f','g','h','j','k','l',';','\'','`',
-    0,                                                                          // 0x2A — Left Shift
+    0,                                                                          // 0x2A - Left Shift
     '\\',
     'z','x','c','v','b','n','m',',','.','/',
-    0,                                                                          // 0x36 — Right Shift
-    '*',                                                                        // 0x37 — Keypad *
-    0,                                                                          // 0x38 — Left Alt
-    ' ',                                                                        // 0x39 — Space
-    0,                                                                          // 0x3A — Caps Lock
+    0,                                                                          // 0x36 - Right Shift
+    '*',                                                                        // 0x37 - Keypad *
+    0,                                                                          // 0x38 - Left Alt
+    ' ',                                                                        // 0x39 - Space
+    0,                                                                          // 0x3A - Caps Lock
     0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,    // F1–F10, Num Lock, Scroll Lock, Home, Up, Page Up, Keypad -, Left,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0                                                 // Keypad 5, Right, Keypad +, End, Down, Page Down, Insert, Delete — all 0
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0                                                 // Keypad 5, Right, Keypad +, End, Down, Page Down, Insert, Delete - all 0
 
 };
 
@@ -35,21 +35,21 @@ static const char scancode_normal[128] = {
 static const char scancode_shifted[128] = {
 
     0,
-    0,                                                                          // 0x01 — Escape
+    0,                                                                          // 0x01 - Escape
     '!','@','#','$','%','^','&','*','(',')','_','+',
-    '\b',                                                                       // 0x0E — Backspace
-    '\t',                                                                       // 0x0F — Tab
+    '\b',                                                                       // 0x0E - Backspace
+    '\t',                                                                       // 0x0F - Tab
     'Q','W','E','R','T','Y','U','I','O','P','{','}',
-    '\n',                                                                       // 0x1C — Enter
-    0,                                                                          // 0x1D — Left Ctrl
+    '\n',                                                                       // 0x1C - Enter
+    0,                                                                          // 0x1D - Left Ctrl
     'A','S','D','F','G','H','J','K','L',':','"','~',
-    0,                                                                          // 0x2A — Left Shift
+    0,                                                                          // 0x2A - Left Shift
     '|',
     'Z','X','C','V','B','N','M','<','>','?',
-    0,                                                                          // 0x36 — Right Shift
+    0,                                                                          // 0x36 - Right Shift
     '*',
-    0,                                                                          // 0x38 — Left Alt
-    ' ',                                                                        // 0x39 — Space
+    0,                                                                          // 0x38 - Left Alt
+    ' ',                                                                        // 0x39 - Space
     0,
     0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
     0,0,0,0,0,0,0,0,0,0,0,0,0,0

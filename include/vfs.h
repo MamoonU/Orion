@@ -20,6 +20,11 @@
 #define VNODE_DEV   3           // character device
 #define VNODE_PIPE  4           // anonymous pipe
 
+// constants
+#define VFS_MOUNT_MAX   8       // max number mounter filesystems
+#define VFS_PATH_MAX    128     // max path length
+#define VFS_NAME_MAX    64      // max file name length
+
 // forward type declarations
 typedef struct vnode   vnode_t;
 typedef struct file    file_t;
@@ -58,12 +63,10 @@ struct file {
     uint32_t    offset;         // current read/write position
     uint32_t    flags;          // open flags
     uint32_t    refcount;       // reference to this file object
+    char        path[VFS_PATH_MAX];
 };
 
-// constants
-#define VFS_MOUNT_MAX   8       // max number mounter filesystems
-#define VFS_PATH_MAX    128     // max path length
-#define VFS_NAME_MAX    64      // max file name length
+
 
 // initialise VFS subsystem
 void     vfs_init(void);

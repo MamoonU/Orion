@@ -39,8 +39,9 @@ extern uint8_t kernel_start;
 extern uint8_t kernel_end;
 
 static void idle_process(void) {
-    while (1)
+    while (1) {
         asm volatile ("hlt");
+    }
 }
 
 void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {

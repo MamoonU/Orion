@@ -72,6 +72,11 @@ void *sbrk(int increment) {
     return (void *)(uintptr_t)syscall(SYS_SBRK, (uint32_t)increment, 0, 0);
 }
 
+// dial a remote PULSAR server over TCP and mount it at path
+int dial(const char *addr, const char *path, uint8_t flags) {
+    return (int)syscall(SYS_DIAL, (uint32_t)addr, (uint32_t)path, (uint32_t)flags);
+}
+
 // human-readable errno string
 char *strerror(int errnum) {
     switch (errnum) {

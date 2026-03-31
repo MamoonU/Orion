@@ -211,7 +211,7 @@ int pipe_create(file_t **fd_table, int pipefd[2]) {
 
     pipe_t *pipe = (pipe_t *)kmalloc(sizeof(pipe_t));               // allocate shared ring buffer
     if (!pipe) {
-        kprintf("PIPE: pipe_create — OOM (pipe_t)\n");
+        kprintf("PIPE: pipe_create - OOM (pipe_t)\n");
         return -1;
     }
     memset(pipe, 0, sizeof(pipe_t));
@@ -262,6 +262,6 @@ int pipe_create(file_t **fd_table, int pipefd[2]) {
     err_free_rv:   kfree(rv);
     err_free_rend: kfree(rend);
     err_free_pipe: kfree(pipe);
-        kprintf("PIPE: pipe_create — allocation failed\n");
+        kprintf("PIPE: pipe_create - allocation failed\n");
         return -1;
 }

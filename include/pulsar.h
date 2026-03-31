@@ -176,4 +176,7 @@ int pulsar_mount(int srv_fd, const char *path, uint8_t ns_flags);
 // dial a remote PULSAR server over TCP, negotiate protocol, mount at path.
 int pulsar_connect(const char *addr, const char *mount_path, uint8_t ns_flags);
 
+// serve one connected client until it disconnects
+void pulsar_serve_session(file_t *data_f);
+
 #endif

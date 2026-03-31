@@ -21,4 +21,6 @@ void irq_uninstall_handler(int irq);
 void irq_handler(regs_t *r);
 void PIC_remap(void);
 
+void irq_unmask(int irq);
+
 #endif
