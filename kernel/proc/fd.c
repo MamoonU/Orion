@@ -70,3 +70,10 @@ int fd_write(file_t **table, int fd, const void *buf, uint32_t len) {
     return vfs_write(table[fd], (void *)buf, len);
 }
 
+// file descriptor seek
+int32_t fd_seek(file_t **table, int fd, int32_t offset, int whence) {
+
+    if (fd < 0 || fd >= FD_MAX || !table[fd]) return -1;
+    return vfs_seek(table[fd], offset, whence);
+}
+

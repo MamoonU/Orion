@@ -14,6 +14,11 @@
 #define O_TRUNC     0x08        // truncate on open
 #define O_APPEND    0x10        // always write at end
 
+// seek origins
+#define SEEK_SET    0           // seek from beginning of file
+#define SEEK_CUR    1           // seek from current position
+#define SEEK_END    2           // seek from end of file (requires valid vnode->size)
+
 // vnode types
 #define VNODE_FILE  1           // regular file
 #define VNODE_DIR   2           // directory
@@ -94,6 +99,9 @@ void vfs_close(file_t *f);
 // read/write from/to open file
 int vfs_read (file_t *f,       void *buf, uint32_t len);
 int vfs_write(file_t *f, const void *buf, uint32_t len);
+
+// reposition the read/write offset of an open file
+int32_t vfs_seek(file_t *f, int32_t offset, int whence);
 
 // create a directory at path
 int vfs_mkdir(const char *path);

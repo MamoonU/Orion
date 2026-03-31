@@ -405,6 +405,8 @@ static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off
         c->local_ip   = lip;                                                        // save target
         c->local_port = lport;
 
+        ip_set_option(c->pcb, SOF_REUSEADDR);                                       // allow rebind while port is in TIME_WAIT
+
         err_t bind_err = tcp_bind(c->pcb, &lip, lport);                             // bind -> IP/port
         if (bind_err != ERR_OK) {
             kprintf("NETFS: bind failed: %d\n", bind_err);

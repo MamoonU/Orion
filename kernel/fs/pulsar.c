@@ -382,7 +382,6 @@ static void srv_free(srv_beam_t *b) {
     b->live = 0;
 }
 
-
 // Send an ANOMALY error response
 static void srv_error(pulsar_session_t *ps, uint8_t *send_buf, uint16_t tag, const char *msg) {
     uint32_t pos = 0;
@@ -492,7 +491,6 @@ static uint8_t *srv_build_dir_cache(const char *dir_path, uint32_t *out_len) {
     *out_len = used;
     return cache;
 }
-
 
 // serve one connected client until it disconnects
 void pulsar_serve_session(file_t *data_f) {
@@ -698,17 +696,10 @@ void pulsar_serve_session(file_t *data_f) {
                 file_t *rf = vfs_open(b->path, O_RDONLY);                               // open file
                 if (rf) {
 
-                    uint32_t skip = (uint32_t)offset;
-                    uint8_t  junk[64];
-
-                    while (skip > 0) {                                                  // seek by reading and discarding
-                        uint32_t chunk = (skip < sizeof(junk)) ? skip : sizeof(junk);
-                        int sk = vfs_read(rf, junk, chunk);
-                        if (sk <= 0) break;
-                        skip -= (uint32_t)sk;
+                    if (rf->vnode && rf->vnode->ops && rf->vnode->ops->read) {
+                        nr = rf->vnode->ops->read(rf->vnode, tmp, count, (uint32_t)offset); // call the vnode read op directly with the client's offset
                     }
-
-                    nr = vfs_read(rf, tmp, count);                                      // read data
+                    
                     if (nr < 0) nr = 0;
                     vfs_close(rf);
                 }
@@ -796,7 +787,6 @@ void pulsar_serve_session(file_t *data_f) {
         srv_free(&srv.beams[i]);
     }
 }
-
 
 // EMIT_TRAVERSE: clone src_beam into new_beam, walking path components
 int pulsar_traverse(pulsar_session_t *s, uint32_t src_beam, uint32_t new_beam, const char **components, uint32_t ncomp, pulsar_signat_t *signat_out) {
@@ -981,6 +971,12 @@ static int pulsar_vfs_open(vnode_t *v, int flags) {
     if (flags & O_TRUNC)             mode |= PULSAR_OTRUNC;
 
     if (pulsar_open(vd->session, vd->beam, mode, 0) < 0) return -1;     // send open protocol
+
+    if (v->type == VNODE_FILE) {                                        // populate v->size with the real remote file size
+        uint64_t remote_size = 0;
+        if (pulsar_scan(vd->session, vd->beam, 0, 0, 0, &remote_size) == 0)
+            v->size = (uint32_t)remote_size;
+    }
 
     vd->beam_opened = 1;                                                // mark beam opened
     return 0;

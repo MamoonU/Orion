@@ -272,6 +272,37 @@ int vfs_write(file_t *f, const void *buf, uint32_t len) {
     return n;
 }
 
+// seek
+int32_t vfs_seek(file_t *f, int32_t offset, int whence) {
+
+    if (!f || !f->vnode) return -1;
+
+    uint32_t new_off;
+
+    switch (whence) {
+
+        case SEEK_SET:                                                          // CASE 1: validates offset is non-negative -> sets f->offset directly
+            if (offset < 0) return -1;
+            new_off = (uint32_t)offset;
+            break;
+
+        case SEEK_CUR:                                                          // CASE 2: adds the signed delta to the current position, checks for underflow
+            if (offset < 0 && (uint32_t)(-offset) > f->offset) return -1;
+            new_off = (uint32_t)((int32_t)f->offset + offset);
+            break;
+
+        case SEEK_END:                                                          // CASE 3: relative to file end -> adds the signed delta to f->vnode->size
+            if (offset < 0 && (uint32_t)(-offset) > f->vnode->size) return -1;
+            new_off = (uint32_t)((int32_t)f->vnode->size + offset);
+            break;
+
+        default:
+            return -1;
+    }
+    f->offset = new_off;
+    return (int32_t)new_off;
+}
+
 // mkdir
 int vfs_mkdir(const char *path) {
 

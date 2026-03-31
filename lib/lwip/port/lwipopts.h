@@ -87,4 +87,6 @@ unsigned int lwip_port_rand(void);
 #define LWIP_SOCKET                 0               // no BSD socket API
 #define LWIP_NETCONN                0               // no sequential (netconn) API
 
+#define SO_REUSE 1
+
 #endif

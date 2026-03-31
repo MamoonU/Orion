@@ -508,6 +508,19 @@ static int32_t sys_dial(regs_t *r) {
     return pulsar_connect(addr, path, flags);
 }
 
+// SYS_SEEK (26): reposition the read/write offset of an open file descriptor
+static int32_t sys_seek(regs_t *r) {
+ 
+    int     fd     = (int)r->ebx;
+    int32_t offset = (int32_t)r->ecx;
+    int     whence = (int)r->edx;
+ 
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+ 
+    return fd_seek(p->fd_table, fd, offset, whence);
+}
+
 typedef int32_t (*syscall_fn_t)(regs_t *);
 
 // define dispatch table
@@ -538,6 +551,7 @@ static syscall_fn_t syscall_table[SYSCALL_COUNT] = {
     [SYS_SIGRETURN] = sys_sigreturn,
     [SYS_KILL]      = sys_kill,
     [SYS_DIAL]      = sys_dial,
+    [SYS_SEEK]      = sys_seek,
 };
 
 void syscall_dispatch(regs_t *r) {
