@@ -427,10 +427,14 @@ static void builtin_mount(int argc, char **argv) {
     sh_write(addr_arg);
     sh_write(" ...\n");
  
-    if (dial(addr_arg, path_arg, flags) < 0) {                              // dial syscall
-        sh_write("mount: failed to connect to ");
-        sh_write(addr_arg);
-        sh_putchar('\n');
+    int rc = dial(addr_arg, path_arg, flags);
+    if (rc < 0) {
+        switch (rc) {
+            case -2: sh_write("mount: network error (TCP connect failed)\n");   break;
+            case -3: sh_write("mount: protocol error (PULSAR handshake failed)\n"); break;
+            case -4: sh_write("mount: namespace full (unbind something first)\n");  break;
+            default: sh_write("mount: failed\n"); break;
+        }
     } else {
         sh_write("mount: ");
         sh_write(addr_arg);

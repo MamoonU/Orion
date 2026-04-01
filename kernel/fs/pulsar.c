@@ -1174,12 +1174,18 @@ int pulsar_connect(const char *addr, const char *mount_path, uint8_t ns_flags) {
  
     pcb_t *p = sched_current();
     if (!p) return -1;
+
+    const char *bang = strchr(addr, '!');                                           // !port check 
+    if (!bang || bang == addr || *(bang + 1) == '\0') {
+        kprintf("PULSAR: connect - bad address \"%s\" (expected ip!port)\n", addr);
+        return -1;   // or PULSAR_ERR_NET
+    }
  
     // step 1: allocate a TCP slot via /net/tcp/clone
     file_t *clone_f = vfs_open("/net/tcp/clone", O_RDONLY);
     if (!clone_f) {
         kprintf("PULSAR: connect - cannot open /net/tcp/clone\n");
-        return -1;
+        return -2;
     }
  
     char slot_str[16];
@@ -1188,7 +1194,7 @@ int pulsar_connect(const char *addr, const char *mount_path, uint8_t ns_flags) {
  
     if (n <= 0) {
         kprintf("PULSAR: connect - clone read failed (no free TCP slots?)\n");
-        return -1;
+        return -2;
     }
  
     // trim trailing whitespace / newline
@@ -1209,7 +1215,7 @@ int pulsar_connect(const char *addr, const char *mount_path, uint8_t ns_flags) {
     file_t *ctl_f = vfs_open(ctl_path, O_WRONLY);
     if (!ctl_f) {
         kprintf("PULSAR: connect - cannot open %s\n", ctl_path);
-        return -1;
+        return -2;
     }
  
     // "connect ip!port"
@@ -1224,7 +1230,7 @@ int pulsar_connect(const char *addr, const char *mount_path, uint8_t ns_flags) {
  
     if (n < 0) {
         kprintf("PULSAR: connect - TCP connect to \"%s\" failed\n", addr);
-        return -1;
+        return -2;
     }
  
     // step 3: open /net/tcp/N/data
@@ -1237,23 +1243,30 @@ int pulsar_connect(const char *addr, const char *mount_path, uint8_t ns_flags) {
     file_t *data_f = vfs_open(data_path, O_RDWR);
     if (!data_f) {
         kprintf("PULSAR: connect - cannot open %s\n", data_path);
-        return -1;
+        return -2;
+    }
+
+    int data_fd = fd_alloc(p, data_f);                      // data_f is now owned by p->fd_table[data_fd]
+    if (data_fd < 0) {
+        kprintf("PULSAR: connect - fd table full\n");
+        vfs_close(data_f);
+        return -2;
     }
  
     // step 4: PULSAR version negotiation
     pulsar_session_t *s = pulsar_session_create(data_f);
     if (!s) {
         kprintf("PULSAR: connect - session_create failed\n");
-        vfs_close(data_f);
-        return -1;
+        fd_close(p, data_fd);   // closes data_f AND clears the fd slot
+        return -3;
     }
  
     // step 5: attach to server root
     if (pulsar_session_attach(s, "") < 0) {
         kprintf("PULSAR: connect - attach failed\n");
         pulsar_session_destroy(s);
-        vfs_close(data_f);
-        return -1;
+        fd_close(p, data_fd);   // closes data_f AND clears the fd slot
+        return -3;
     }
  
     // step 6: wrap root beam as a VFS vnode and bind into namespace
@@ -1261,18 +1274,26 @@ int pulsar_connect(const char *addr, const char *mount_path, uint8_t ns_flags) {
     if (!root_vnode) {
         kprintf("PULSAR: connect - vnode_create failed\n");
         pulsar_session_destroy(s);
-        vfs_close(data_f);
-        return -1;
+        fd_close(p, data_fd);   // closes data_f AND clears the fd slot
+        return -3;
     }
  
     char resolved[VFS_PATH_MAX];
     vfs_path_resolve(p->cwd_path, mount_path, resolved);
+
+    if (!p->namespace) {                                                    // (p->namespace = NULL) handling
+        p->namespace = ns_create();
+        if (!p->namespace) {
+            kprintf("PULSAR: connect - cannot create namespace\n");
+            return -4;
+        }
+    }
  
     if (ns_bind(&p->namespace, root_vnode, resolved, ns_flags) < 0) {
         kprintf("PULSAR: connect - ns_bind at \"%s\" failed\n", resolved);
         pulsar_session_destroy(s);
         vfs_close(data_f);
-        return -1;
+        return -4;
     }
  
     // mark bind entry as a network PULSAR mount (srv_fd = -2) for nsdump

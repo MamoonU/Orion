@@ -32,6 +32,11 @@
 #define PULSAR_ENAME_MAX    128             // max error string length
 #define PULSAR_HDR          7               // header size: | size[4] | type[1] | tag[2]
 
+// error codes
+#define PULSAR_ERR_NET       -2   // TCP layer failed (clone/ctl/data)
+#define PULSAR_ERR_PROTO     -3   // version negotiation or attach failed
+#define PULSAR_ERR_BIND      -4   // namespace bind failed
+
 // version negotiation
 #define EMIT_HAIL       100     // (Tversion)
 #define ECHO_HAIL       101     // (Rversion)
