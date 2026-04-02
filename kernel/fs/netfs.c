@@ -26,6 +26,7 @@
 #include "proc.h"
 #include "sched.h"
 #include "pulsar.h"
+#include "lwip_orion.h"
 
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
@@ -211,6 +212,7 @@ static void block_self(uint16_t *slot) {
 
     while (self->state == PROC_BLOCKED) {
         asm volatile("sti; hlt; cli" ::: "memory");
+        lwip_orion_poll();
     }
 
     self->state = PROC_RUNNING;
@@ -221,6 +223,7 @@ static void block_self(uint16_t *slot) {
 static err_t tcp_connected_cb(void *arg, struct tcp_pcb *pcb, err_t err) {
 
     netfs_tcp_t *c = (netfs_tcp_t *)arg;            // lwIP passed args
+    kprintf("NETFS: tcp_connected_cb fired err=%d state=%d waiter=%u\n", (int)err, (int)c->state, (uint32_t)c->blocked_connector);
 
     if (err == ERR_OK) {                            // success case
         c->state      = CONN_ESTABLISHED;
@@ -283,16 +286,42 @@ static err_t tcp_accept_cb(void *arg, struct tcp_pcb *new_pcb, err_t err) {
     netfs_tcp_t *c = (netfs_tcp_t *)arg;
     if (err != ERR_OK || !new_pcb) return ERR_VAL;
 
-    if (c->accept_count >= NETFS_ACCEPT_Q) {            // queue full check
-        tcp_abort(new_pcb); return ERR_ABRT;
+    if (c->accept_count >= NETFS_ACCEPT_Q) {                                                // queue full check
+        tcp_abort(new_pcb);
+        return ERR_ABRT;
     }
 
-    uint8_t tail = (uint8_t)((c->accept_head + c->accept_count) & (NETFS_ACCEPT_Q - 1));
+    // allocate and initialise a slot now - before returning to lwIP so tcp_recv is registered before any data arrives from the client
+    uint32_t nslot = ~0u;
+    for (uint32_t i = 0; i < NETFS_TCP_MAX; i++) {
+        if (tcp_conns[i].state == CONN_FREE) { nslot = i; break; }
+    }
+    if (nslot == ~0u) { tcp_abort(new_pcb); return ERR_ABRT; }
 
-    c->accept_q[tail] = new_pcb;                        // insert into accept queue
+    netfs_tcp_t *nc = &tcp_conns[nslot];
+    nc->rx_head = nc->rx_count = 0;
+    nc->blocked_reader    = NETFS_NO_WAITER;
+    nc->blocked_connector = NETFS_NO_WAITER;
+    nc->blocked_acceptor  = NETFS_NO_WAITER;
+    nc->accept_head = nc->accept_count = 0;
+    nc->conn_err    = 0;
+    nc->local_port  = new_pcb->local_port;
+    nc->remote_port = new_pcb->remote_port;
+    nc->local_ip    = new_pcb->local_ip;
+    nc->remote_ip   = new_pcb->remote_ip;
+    nc->pcb   = new_pcb;
+    nc->state = CONN_ESTABLISHED;
+
+    // register callbacks immediately: any data sent by client will now be buffered
+    tcp_arg (nc->pcb, nc);
+    tcp_recv(nc->pcb, tcp_recv_cb);
+    tcp_err (nc->pcb, tcp_err_cb);
+
+    uint8_t tail = (uint8_t)((c->accept_head + c->accept_count) & (NETFS_ACCEPT_Q - 1));
+    c->accept_q[tail] = (struct tcp_pcb *)(uintptr_t)nslot;                                 // store slot index
     c->accept_count++;
 
-    wake_pid(&c->blocked_acceptor);                     // wake acceptor
+    wake_pid(&c->blocked_acceptor);                                                         // wake acceptor
     return ERR_OK;
 }
 
@@ -386,12 +415,31 @@ static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off
 
         c->remote_ip   = rip;                                                       // save target
         c->remote_port = rport;
+
+        // register waiter BEFORE tcp_connect so callback can always wake us
+        pcb_t *self = sched_current();
+        c->blocked_connector = (uint16_t)self->pid;
         c->state       = CONN_CONNECTING;
 
-        err_t e = tcp_connect(c->pcb, &rip, rport, tcp_connected_cb);               // call lwIP
-        if (e != ERR_OK) { c->state = CONN_ALLOCATED; return -1; }
+        err_t e = tcp_connect(c->pcb, &rip, rport, tcp_connected_cb);
+        if (e != ERR_OK) {
+            c->state = CONN_ALLOCATED;
+            c->blocked_connector = NETFS_NO_WAITER;
+            return -1;
+        }
 
-        block_self(&c->blocked_connector);                                          // block process
+        // only sleep if callback hasn't already fired
+        if (c->state != CONN_ESTABLISHED) {
+            self->state = PROC_BLOCKED;
+            sched_remove(self);
+            while (self->state == PROC_BLOCKED) {
+                asm volatile("sti; hlt; cli" ::: "memory");
+            }
+            self->state = PROC_RUNNING;
+        } else {
+            c->blocked_connector = NETFS_NO_WAITER;
+        }                                                                        // block process
+
         return (c->state == CONN_ESTABLISHED) ? (int)len : -1;
 
     } else if (strncmp(cmd, "announce ", 9) == 0) {                                 // 2. announce *!port
@@ -426,41 +474,17 @@ static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off
 
         if (c->state != CONN_LISTEN) return -1;
 
-        while (c->accept_count == 0 && c->state == CONN_LISTEN) {                   // wait: tcp_accept_cb enqueues new PCB
+        while (c->accept_count == 0 && c->state == CONN_LISTEN) {
             block_self(&c->blocked_acceptor);
         }
         if (c->accept_count == 0) return -1;
 
-        uint32_t nslot = ~0u;                                                       // find free slot for the new connection
-        for (uint32_t i = 0; i < NETFS_TCP_MAX; i++) {
-            if (tcp_conns[i].state == CONN_FREE) { nslot = i; break; }
-        }
-        if (nslot == ~0u) return -1;
-
-        netfs_tcp_t *nc = &tcp_conns[nslot];
-        nc->pcb = c->accept_q[c->accept_head];                                      // transfer PCB
+        // slot was fully initialised in tcp_accept_cb — just extract the index
+        uint32_t nslot = (uint32_t)(uintptr_t)c->accept_q[c->accept_head];
         c->accept_head  = (uint8_t)((c->accept_head + 1) & (NETFS_ACCEPT_Q - 1));
         c->accept_count--;
 
-        nc->rx_head = 0;
-        nc->rx_count = 0;
-        nc->blocked_reader    = NETFS_NO_WAITER;
-        nc->blocked_connector = NETFS_NO_WAITER;
-        nc->blocked_acceptor  = NETFS_NO_WAITER;
-        nc->accept_head = 0;
-        nc->accept_count = 0;
-        nc->conn_err = 0;
-        nc->local_port  = nc->pcb->local_port;
-        nc->remote_port = nc->pcb->remote_port;
-        nc->local_ip    = nc->pcb->local_ip;
-        nc->remote_ip   = nc->pcb->remote_ip;
-        nc->state       = CONN_ESTABLISHED;
-
-        tcp_arg (nc->pcb, nc);
-        tcp_recv(nc->pcb, tcp_recv_cb);
-        tcp_err (nc->pcb, tcp_err_cb);
-
-        kprintf("NETFS: accept: new TCP connection in slot %u\n", nslot);
+        kprintf("NETFS: accept: connection ready in slot %u\n", nslot);
         return (int)len;
 
     } else if (strcmp(cmd, "close") == 0) {                                         // 4. close
@@ -475,79 +499,51 @@ static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off
         wake_pid(&c->blocked_reader);                                               // wake reader
         return (int)len;
 
-    } else if (strcmp(cmd, "serve") == 0) {                                         // 5. PULSAR server mode
+    } else if (strcmp(cmd, "serve") == 0) {
 
-        if (c->state != CONN_LISTEN) return -1;                                     // serve = listening socket only
+        if (c->state != CONN_LISTEN) return -1;
 
         kprintf("NETFS: TCP slot %u entering PULSAR serve mode\n", f->slot);
 
         for (;;) {
 
-            while (c->accept_count == 0 && c->state == CONN_LISTEN) {               // block until a connection arrives
+            while (c->accept_count == 0 && c->state == CONN_LISTEN) {
                 block_self(&c->blocked_acceptor);
             }
 
-            if (c->accept_count == 0) break;                                        // listener closed
+            if (c->accept_count == 0) break;
 
-            uint32_t nslot = ~0u;
-            for (uint32_t i = 0; i < NETFS_TCP_MAX; i++) {                          // find free connection slot
-                if (tcp_conns[i].state == CONN_FREE) {
-                    nslot = i;
-                    break;
-                    }
-            }
-
-            if (nslot == ~0u) {                                                     // no slot available handling
-                kprintf("NETFS: serve - no free TCP slot\n");
-                tcp_abort(c->accept_q[c->accept_head]);
-                c->accept_head  = (uint8_t)((c->accept_head + 1) & (NETFS_ACCEPT_Q - 1));
-                c->accept_count--;
-                continue;
-            }
-
-            netfs_tcp_t *nc = &tcp_conns[nslot];                                    // transfer accepted connection: listener queue -> connection slot
-            nc->pcb         = c->accept_q[c->accept_head];
+            // slot was fully initialised in tcp_accept_cb — just extract the index
+            uint32_t nslot = (uint32_t)(uintptr_t)c->accept_q[c->accept_head];
             c->accept_head  = (uint8_t)((c->accept_head + 1) & (NETFS_ACCEPT_Q - 1));
             c->accept_count--;
 
-            nc->rx_head = nc->rx_count = 0;                                         // initialise new connection
-            nc->blocked_reader    = NETFS_NO_WAITER;
-            nc->blocked_connector = NETFS_NO_WAITER;
-            nc->blocked_acceptor  = NETFS_NO_WAITER;
-            nc->accept_head = nc->accept_count = 0;
-            nc->conn_err    = 0;
-            nc->local_port  = nc->pcb->local_port;                                  // copy connection metadata
-            nc->remote_port = nc->pcb->remote_port;
-            nc->local_ip    = nc->pcb->local_ip;
-            nc->remote_ip   = nc->pcb->remote_ip;
-            nc->state       = CONN_ESTABLISHED;
+            if (nslot >= NETFS_TCP_MAX) {
+                kprintf("NETFS: serve - invalid slot index %u\n", nslot);
+                continue;
+            }
 
-            tcp_arg (nc->pcb, nc);                                                  // attach callbacks
-            tcp_recv(nc->pcb, tcp_recv_cb);
-            tcp_err (nc->pcb, tcp_err_cb);
-
+            netfs_tcp_t *nc = &tcp_conns[nslot];
             kprintf("NETFS: serve - accepted connection in slot %u\n", nslot);
 
             char dpath[VFS_PATH_MAX];
-            build_path(dpath, sizeof(dpath), "/net/tcp/", nslot, "/data");          // open data file
+            build_path(dpath, sizeof(dpath), "/net/tcp/", nslot, "/data");
 
-            file_t *data_f = vfs_open(dpath, O_RDWR);                               // data channel for TCP connection
-
-            if (!data_f) {                                                          // fail case
+            file_t *data_f = vfs_open(dpath, O_RDWR);
+            if (!data_f) {
                 kprintf("NETFS: serve - cannot open %s\n", dpath);
                 nc->state = CONN_FREE;
                 if (nc->pcb) { tcp_abort(nc->pcb); nc->pcb = 0; }
                 continue;
             }
 
-            pulsar_serve_session(data_f);                                           // start pulsar server
-            vfs_close(data_f);                                                      // close VFS file
+            pulsar_serve_session(data_f);
+            vfs_close(data_f);
 
-            if (nc->pcb && nc->state == CONN_ESTABLISHED) {                         // close TCP connection
+            if (nc->pcb && nc->state == CONN_ESTABLISHED)
                 tcp_close(nc->pcb);
-            } else if (nc->pcb) {
+            else if (nc->pcb)
                 tcp_abort(nc->pcb);
-            }
 
             nc->pcb   = 0;
             nc->state = CONN_FREE;

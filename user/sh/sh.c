@@ -444,6 +444,43 @@ static void builtin_mount(int argc, char **argv) {
     }
 }
 
+static void builtin_serve(void) {
+
+    sh_write("serve: starting PULSAR server on port 564...\n");
+
+    // get a free TCP slot
+    int fd = open("/net/tcp/clone", O_RDONLY);
+    if (fd < 0) { sh_write("serve: cannot open /net/tcp/clone\n"); return; }
+    char slot[16];
+    int n = read(fd, slot, sizeof(slot) - 1);
+    close(fd);
+    if (n <= 0) { sh_write("serve: no free TCP slots\n"); return; }
+    slot[n] = '\0';
+    int slen = n;
+    while (slen > 0 && (slot[slen-1] == '\n' || slot[slen-1] == '\r' || slot[slen-1] == ' '))
+        slot[--slen] = '\0';
+
+    // build ctl path
+    char ctl[64];
+    strcpy(ctl, "/net/tcp/");
+    strcat(ctl, slot);
+    strcat(ctl, "/ctl");
+
+    // announce *!564
+    fd = open(ctl, O_WRONLY);
+    if (fd < 0) { sh_write("serve: cannot open ctl\n"); return; }
+    write(fd, "announce *!564", 14);
+    close(fd);
+
+    sh_write("serve: listening on port 564\n");
+
+    // enter serve loop (blocks until killed)
+    fd = open(ctl, O_WRONLY);
+    if (fd < 0) { sh_write("serve: cannot reopen ctl\n"); return; }
+    write(fd, "serve", 5);
+    close(fd);
+}
+
 static const char *g_exec_path = 0;             // shared variable between parent & child: set by sh_exec before fork
 
 // runs in child process
@@ -504,6 +541,7 @@ static void sh_dispatch(int argc, char **argv) {
     else if (strcmp(argv[0], "unbind" ) == 0) builtin_unbind(argc, argv);
     else if (strcmp(argv[0], "nsdump" ) == 0) nsdump();
     else if (strcmp(argv[0], "mount"  ) == 0) builtin_mount(argc, argv);
+    else if (strcmp(argv[0], "serve"  ) == 0) builtin_serve();
     else if (strcmp(argv[0], "exit"   ) == 0) {
         int code = (argc >= 2) ? atoi(argv[1]) : 0;
         _exit(code);                                            // terminate shell
