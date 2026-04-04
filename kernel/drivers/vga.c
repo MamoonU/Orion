@@ -1,4 +1,4 @@
-// drivers/vga.c — VGA text mode (80x25) driver
+// drivers/vga.c - VGA text mode (80x25) driver
 
 #include "vga.h"
 #include "string.h"
@@ -98,4 +98,9 @@ void terminal_clear(void) {
     terminal_row = 0;
     terminal_col = 0;
     cursor_sync();
+}
+
+void terminal_set_cursor(uint32_t row, uint32_t col) {
+    terminal_row    = row;
+    terminal_col    = col;
 }

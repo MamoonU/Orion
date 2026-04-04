@@ -5,12 +5,18 @@
 #include "serial.h"
 
 static volatile uint32_t tick_count = 0;
+static timer_tick_cb_t   tick_cb    = 0;
+
+void timer_register_tick_cb(timer_tick_cb_t cb) {
+    tick_cb = cb;
+}
 
 // timer fires = timer_handler()
 void timer_handler(regs_t *r) {
     (void)r;                                    // pass CPU register state (future dev)
     tick_count++;
     sched_tick();
+    if (tick_cb) tick_cb();                     // drives lwip_orion_poll at 100 Hz
 }
 
 uint32_t timer_get_ticks(void) {

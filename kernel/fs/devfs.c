@@ -53,11 +53,32 @@ static vfs_ops_t stdin_ops = {
 // /dev/stdout: VGA terminal write-only
 static int vga_write_op(vnode_t *v, const void *buf, uint32_t len, uint32_t offset) {
 
-    (void)v; (void)offset;
-    const char *src = (const char *)buf;                // cast buffer -> char
+    (void)v;
+    (void)offset;
 
-    for (uint32_t i = 0; i < len; i++)                  // output loop
-        terminal_putchar(src[i]);
+    const char *src = (const char *)buf;
+    uint32_t i = 0;
+    while (i < len) {
+
+        if (src[i] == '\033' && i + 1 < len && src[i+1] == '[') {
+
+            uint32_t j = i + 2;
+            while (j < len && src[j] >= 0x20 && src[j] <= 0x3F) j++;
+            
+            if (j < len) {
+                char cmd = src[j];
+                uint32_t seq_len = j - (i + 2);
+                const char *arg = src + i + 2;
+                if (cmd == 'J' && seq_len == 1 && arg[0] == '2')
+                    terminal_clear();       // \033[2J - erase display
+                else if (cmd == 'H' && seq_len == 0)
+                    terminal_set_cursor(0, 0);  // \033[H  - cursor home
+                i = j + 1;
+                continue;
+            }
+        }
+        terminal_putchar(src[i++]);
+    }
     return (int)len;
 }
 
@@ -171,7 +192,7 @@ void devfs_init(void) {
     kprintf("DEVFS: Initialising\n");
 
     if (vfs_mkdir("/dev") < 0) {                                            // create /dev directory inside ramfs
-        kprintf("DEVFS: FATAL — could not create /dev\n");
+        kprintf("DEVFS: FATAL - could not create /dev\n");
         return;
     }
 
@@ -183,7 +204,7 @@ void devfs_init(void) {
     g_random = vnode_alloc(VNODE_DEV, &random_ops, 0);
 
     if (!g_stdin || !g_stdout || !g_stderr || !g_null  || !g_zero   || !g_random) {     // OOM protection
-        kprintf("DEVFS: FATAL — OOM allocating device vnodes\n");
+        kprintf("DEVFS: FATAL - OOM allocating device vnodes\n");
         return;
     }
 

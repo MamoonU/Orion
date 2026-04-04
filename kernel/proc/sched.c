@@ -44,7 +44,6 @@ void sched_add(pcb_t *p) {
 
     // insert into queue
     ready_queue[queue_size++] = p;
-    kprintf("SCHED: [%u] \"%s\" added to queue (queue_size=%u)\n", (uint32_t)p->pid, p->name, queue_size);
 }
 
 // remove process from ready queue

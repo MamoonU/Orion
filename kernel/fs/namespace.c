@@ -23,7 +23,7 @@ ns_t *ns_create(void) {
  
     ns_t *ns = kmalloc(sizeof(ns_t));                               // alloc mem
     if (!ns) {
-        kprintf("NS: ns_create — OOM\n");                           // OOM
+        kprintf("NS: ns_create - OOM\n");                           // OOM
         return 0;
     }
  
@@ -86,7 +86,7 @@ void  ns_unref(ns_t *ns) {
 
     if (!ns) return;
     if (ns->refcount == 0) {                                                // prevent double free
-        kprintf("NS: ns_unref — WARNING: refcount already zero\n");
+        kprintf("NS: ns_unref - WARNING: refcount already zero\n");
         return;
     }
  
@@ -157,7 +157,7 @@ int ns_bind(ns_t **nsp, vnode_t *vnode, const char *new_path, uint8_t flags) {
         kprintf("NS: bind \"%s\" flags=%u (ns=0x%p, total=%u)\n", new_path, (uint32_t)flags, (uint32_t)ns, ns->nbinds);
         return 0;
     }
-    kprintf("NS: ns_bind — bind table full (max %u)\n", (uint32_t)NS_BINDS_MAX);
+    kprintf("NS: ns_bind - bind table full (max %u)\n", (uint32_t)NS_BINDS_MAX);
     return -1;
 }
 

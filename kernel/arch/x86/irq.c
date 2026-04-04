@@ -16,6 +16,20 @@ void irq_uninstall_handler(int irq) {
     irq_handlers[irq] = 0;
 }
 
+void irq_unmask(int irq) {
+    if (irq < 0 || irq > 15) return;
+
+    if (irq < 8) {
+        uint8_t mask = inb(0x21);
+        mask &= ~(1u << irq);       // clear bit = unmask
+        outb(0x21, mask);
+    } else {
+        uint8_t mask = inb(0xA1);
+        mask &= ~(1u << (irq - 8));
+        outb(0xA1, mask);
+        irq_unmask(2);              // slave is routed through IRQ2 on master - must also be unmasked
+    }
+}
 
 void PIC_remap() {						//Remap PIC to avoid conflicts with CPU exceptions
 

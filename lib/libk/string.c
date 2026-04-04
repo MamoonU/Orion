@@ -67,3 +67,18 @@ int strncmp(const char *a, const char *b, size_t n) {
     if (!n) return 0;
     return (int)(unsigned char)*a - (int)(unsigned char)*b;
 }
+
+char *strcat(char *dst, const char *src) {
+    char *d = dst;
+    while (*d) d++;
+    while ((*d++ = *src++));
+    return dst;
+}
+
+char *strncat(char *dst, const char *src, size_t n) {
+    char *d = dst;
+    while (*d) d++;
+    while (n-- && *src) *d++ = *src++;
+    *d = '\0';
+    return dst;
+}

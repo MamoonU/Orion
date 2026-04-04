@@ -9,16 +9,16 @@
 int proc_exec(pcb_t *p, uint32_t new_entry) {
 
     if (!p) {
-        kprintf("PROC: proc_exec — NULL pcb\n");
+        kprintf("PROC: proc_exec - NULL pcb\n");
         return -1;
     }
 
     if (p->state == PROC_RUNNING) {
-        kprintf("PROC: proc_exec — cannot exec a RUNNING process\n");
+        kprintf("PROC: proc_exec - cannot exec a RUNNING process\n");
         return -1;
     }
 
-    kprintf("PROC: proc_exec — [%u] \"%s\" -> new entry 0x%p\n", (uint32_t)p->pid, p->name, new_entry);
+    kprintf("PROC: proc_exec - [%u] \"%s\" -> new entry 0x%p\n", (uint32_t)p->pid, p->name, new_entry);
 
     // remove from ready queue if already queued
     sched_remove(p);
@@ -58,7 +58,7 @@ int proc_exec(pcb_t *p, uint32_t new_entry) {
     p->state = PROC_READY;                                              // mark process ready again
     sched_add(p);                                                       // add back to scheduler
 
-    kprintf("PROC: proc_exec — [%u] re-queued at 0x%p\n", (uint32_t)p->pid, new_entry);
+    kprintf("PROC: proc_exec - [%u] re-queued at 0x%p\n", (uint32_t)p->pid, new_entry);
 
     return 0;                                                           // return success
 }

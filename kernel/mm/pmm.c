@@ -79,7 +79,7 @@ void pmm_init(multiboot_info_t *mbi, uint32_t kernel_phys_start, uint32_t kernel
 
     if (!(mbi->flags & MULTIBOOT_FLAG_MMAP)) {      // if no GRUB mmap
 
-        kprintf("PMM: FATAL ERROR — GRUB did not provide a memory map\n");
+        kprintf("PMM: FATAL ERROR - GRUB did not provide a memory map\n");
 
         if (mbi->flags & MULTIBOOT_FLAG_MEM) {                                  // fallback assuming memory up to mem_upper is free
             kprintf("PMM: Falling back to mem_upper field\n");
@@ -195,7 +195,7 @@ void pmm_free_frame(uint32_t phys_addr) {
     if (frame == 0) return;                                                             // protect frame 0
 
     if (!bitmap_test(frame)) {                                          // detect double free errors
-        kprintf("PMM: WARNING — double-free of frame %p\n", phys_addr);
+        kprintf("PMM: WARNING - double-free of frame %p\n", phys_addr);
         return;
     }
 
@@ -207,10 +207,54 @@ void pmm_free_frame(uint32_t phys_addr) {
 
 }
 
-
 // return # of total, used, free frames
 uint32_t pmm_get_total_frames(void) { return pmm_total_frames; }
 uint32_t pmm_get_used_frames(void)  { return pmm_used_frames;  }
 uint32_t pmm_get_free_frames(void)  { return pmm_total_frames - pmm_used_frames; }
+
+// scan bitmap for N consecutive free frames and mark all reserved
+uint32_t pmm_alloc_contiguous(uint32_t n) {
+
+    if (n == 0 || pmm_total_frames < n) return 0;
+
+    uint32_t streak    = 0;                                         // # of consecutive free frames found
+    uint32_t candidate = 1;                                         // start of run
+
+    for (uint32_t frame = 1; frame < PMM_MAX_FRAMES; frame++) {     // scan bitmap
+
+        if (!bitmap_test(frame)) {                                  // if frame is free
+
+            if (streak == 0) {                                      // start of new run
+                candidate = frame;
+            }
+
+            streak++;
+
+            if (streak == n) {                                      // found a run of n free frames
+
+                for (uint32_t i = 0; i < n; i++) {                  // mark n frames used
+                    bitmap_set(candidate + i);
+                    pmm_used_frames++;
+                }
+
+                return FRAME_TO_ADDR(candidate);                    // return physical address
+            }
+
+        } else {
+            streak = 0;                                             // reset on any reserved frame
+        }
+    }
+
+    kprintf("PMM: pmm_alloc_contiguous(%u) - no contiguous region found\n", n);
+    return 0;
+}
+
+// free n consecutive frames
+void pmm_free_contiguous(uint32_t phys_addr, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++) {
+        pmm_free_frame(phys_addr + i * PAGE_SIZE);
+    }
+}
+
 
 

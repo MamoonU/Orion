@@ -109,7 +109,26 @@ static int32_t sys_open(regs_t *r) {
     pcb_t *p = sched_current();
     if (!p) return -1;
 
-    file_t *f = vfs_open(path, flags);
+    char resolved[VFS_PATH_MAX];
+    vfs_path_resolve(p->cwd_path, path, resolved);
+
+    vnode_t *v = ns_resolve(p->namespace, resolved);  // namespace-aware
+    if (!v) {
+
+        if (!(flags & O_CREAT)) return -1;
+
+        file_t *f = vfs_open(resolved, flags);          // creation path - fall through to vfs_open which handles O_CREAT
+        if (!f) return -1;
+
+        strncpy(f->path, resolved, VFS_PATH_MAX - 1);   // patch path onto created file
+        f->path[VFS_PATH_MAX - 1] = '\0';
+
+        int fd = fd_install(p->fd_table, f);
+        if (fd < 0) { vfs_close(f); return -1; }
+        return fd;
+    }
+
+    file_t *f = vfs_open_vnode_at(v, flags, resolved);
     if (!f) return -1;
 
     int fd = fd_install(p->fd_table, f);
@@ -142,7 +161,6 @@ static int32_t sys_pipe(regs_t *r) {
 }
 
 // SYS_DUP2 (11): duplicate oldfd onto newfd
-
 static int32_t sys_dup2(regs_t *r) {                            // closes newfd if open -> install oldfd's file_t at newfd
     int oldfd = (int)r->ebx;
     int newfd = (int)r->ecx;
@@ -308,6 +326,15 @@ static int32_t sys_readdir(regs_t *r) {
  
     file_t *f = (fd >= 0 && fd < FD_MAX) ? p->fd_table[fd] : 0;
     if (!f) return -1;
+
+    vnode_t *v = f->vnode;
+    if (!v || v->type != VNODE_DIR) return -1;
+
+    // if file has a recorded path, use namespace-aware readdir
+    if (f->path[0] != '\0' && p->namespace) {
+        vnode_t *child = 0;
+        return ns_readdir(p->namespace, f->path, index, name_buf, buflen, &child);
+    }
  
     return vfs_readdir(f, index, name_buf, buflen, 0);
 }
@@ -467,35 +494,64 @@ static int32_t sys_kill(regs_t *r) {
     return 0;
 }
 
+// SYS_DIAL (25): dial TCP PULSAR server and mount at path
+static int32_t sys_dial(regs_t *r) {
+ 
+    const char *addr  = (const char *)r->ebx;
+    const char *path  = (const char *)r->ecx;
+    uint8_t     flags = (uint8_t)r->edx;
+ 
+    if (!syscall_validate_ptr(addr, 1)) return -1;
+    if (!syscall_validate_ptr(path, 1)) return -1;
+    if (flags > NS_BIND_AFTER) return -1;
+ 
+    return pulsar_connect(addr, path, flags);
+}
+
+// SYS_SEEK (26): reposition the read/write offset of an open file descriptor
+static int32_t sys_seek(regs_t *r) {
+ 
+    int     fd     = (int)r->ebx;
+    int32_t offset = (int32_t)r->ecx;
+    int     whence = (int)r->edx;
+ 
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+ 
+    return fd_seek(p->fd_table, fd, offset, whence);
+}
+
 typedef int32_t (*syscall_fn_t)(regs_t *);
 
 // define dispatch table
 static syscall_fn_t syscall_table[SYSCALL_COUNT] = {
-    [SYS_YIELD]  = sys_yield,
-    [SYS_EXIT]   = sys_exit,
-    [SYS_GETPID] = sys_getpid,
-    [SYS_SLEEP]  = sys_sleep,
-    [SYS_FORK]   = sys_fork,
-    [SYS_EXEC]   = sys_exec,
-    [SYS_WRITE]  = sys_write,
-    [SYS_READ]   = sys_read,
-    [SYS_OPEN]   = sys_open,
-    [SYS_CLOSE]  = sys_close,
-    [SYS_PIPE]   = sys_pipe,
-    [SYS_DUP2]   = sys_dup2,
-    [SYS_EXECVE] = sys_execve,
-    [SYS_WAIT]   = sys_wait,
-    [SYS_CHDIR]   = sys_chdir,
-    [SYS_GETCWD]  = sys_getcwd,
-    [SYS_READDIR] = sys_readdir,
-    [SYS_BIND]    = sys_bind,
-    [SYS_UNBIND]  = sys_unbind,
-    [SYS_NSDUMP]  = sys_nsdump,
-    [SYS_MOUNT]   = sys_mount,
-    [SYS_SBRK]    = sys_sbrk,
-    [SYS_SIGNAL]  = sys_signal,
+    [SYS_YIELD]     = sys_yield,
+    [SYS_EXIT]      = sys_exit,
+    [SYS_GETPID]    = sys_getpid,
+    [SYS_SLEEP]     = sys_sleep,
+    [SYS_FORK]      = sys_fork,
+    [SYS_EXEC]      = sys_exec,
+    [SYS_WRITE]     = sys_write,
+    [SYS_READ]      = sys_read,
+    [SYS_OPEN]      = sys_open,
+    [SYS_CLOSE]     = sys_close,
+    [SYS_PIPE]      = sys_pipe,
+    [SYS_DUP2]      = sys_dup2,
+    [SYS_EXECVE]    = sys_execve,
+    [SYS_WAIT]      = sys_wait,
+    [SYS_CHDIR]     = sys_chdir,
+    [SYS_GETCWD]    = sys_getcwd,
+    [SYS_READDIR]   = sys_readdir,
+    [SYS_BIND]      = sys_bind,
+    [SYS_UNBIND]    = sys_unbind,
+    [SYS_NSDUMP]    = sys_nsdump,
+    [SYS_MOUNT]     = sys_mount,
+    [SYS_SBRK]      = sys_sbrk,
+    [SYS_SIGNAL]    = sys_signal,
     [SYS_SIGRETURN] = sys_sigreturn,
-    [SYS_KILL]    = sys_kill,
+    [SYS_KILL]      = sys_kill,
+    [SYS_DIAL]      = sys_dial,
+    [SYS_SEEK]      = sys_seek,
 };
 
 void syscall_dispatch(regs_t *r) {

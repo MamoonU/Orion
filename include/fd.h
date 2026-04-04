@@ -26,8 +26,11 @@ void fd_table_clone   (file_t **src, file_t **dst);
 int  fd_install       (file_t **table, file_t *f);
 
 // low-level read/write routed through the fd type
-// return bytes transferred, or -1 on error
 int fd_read (file_t **table, int fd,       void *buf, uint32_t len);
 int fd_write(file_t **table, int fd, const void *buf, uint32_t len);
+
+// reposition the offset of an open file descriptor
+// whence: SEEK_SET | SEEK_CUR | SEEK_END  (defined in vfs.h)
+int32_t fd_seek(file_t **table, int fd, int32_t offset, int whence);
 
 #endif

@@ -74,14 +74,14 @@ static int ensure_mapped(uint32_t end) {
     while (heap_virt_mapped < end) {
 
         if (heap_virt_mapped + PAGE_SIZE > HEAP_MAX) {                                  // kernel heap hit ceiling
-            kprintf("KHEAP: FATAL — virtual heap ceiling reached\n");
+            kprintf("KHEAP: FATAL - virtual heap ceiling reached\n");
             return -1;
         }
 
         uint32_t phys = pmm_alloc_frame();
 
         if (!phys) {
-            kprintf("KHEAP: FATAL — PMM out of physical frames\n");                // out of physical memory
+            kprintf("KHEAP: FATAL - PMM out of physical frames\n");                // out of physical memory
             return -1;
         }
 
@@ -182,7 +182,7 @@ void kheap_init(void) {
 
     uint32_t phys = pmm_alloc_frame();                                          // physical frame from PMM
     if (!phys)
-        panic("KHEAP: init — cannot allocate first heap page from PMM");
+        panic("KHEAP: init - cannot allocate first heap page from PMM");
 
     vmm_map_page(HEAP_START, phys, VMM_KERNEL_RW);                              // map first page
     heap_virt_mapped = HEAP_START + PAGE_SIZE;
@@ -202,7 +202,7 @@ void kheap_init(void) {
 
     char *bp = extend_heap(init);               // add first free block between prologue & epilogue
     if (!bp)
-        panic("KHEAP: init — extend_heap failed (PMM OOM?)");
+        panic("KHEAP: init - extend_heap failed (PMM OOM?)");
 
     // output kheap info
     kprintf("KHEAP: Base       @ %p\n", (uint32_t)HEAP_START);
@@ -237,7 +237,7 @@ void *kmalloc(size_t size) {
     char *bp = extend_heap(extsize);                                    // extend heap by extsize
 
     if (!bp) {
-        kprintf("KHEAP: kmalloc — out of memory\n");
+        kprintf("KHEAP: kmalloc - out of memory\n");
         return 0;
     }
 
