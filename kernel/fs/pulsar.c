@@ -346,8 +346,6 @@ typedef struct {
 typedef struct {
     srv_beam_t beams[SRV_BEAM_MAX];
     uint32_t   msize;
-    uint8_t    send_buf[PULSAR_MSIZE];
-    uint8_t    recv_buf[PULSAR_MSIZE];
 } pulsar_srv_t;
 
 // find active beam: scan client beams array
@@ -500,11 +498,22 @@ void pulsar_serve_session(file_t *data_f) {
     pulsar_session_t *ps = kmalloc(sizeof(pulsar_session_t));                       // Reuse the client-side pulse_send/pulse_recv via a fake session
     if (!ps) { kprintf("PULSAR-SRV: OOM allocating session\n"); return; }
 
-    pulsar_srv_t *srv = kmalloc(sizeof(pulsar_srv_t));                              // holds beam table, buffers, msize
+    pulsar_srv_t *srv = kmalloc(sizeof(pulsar_srv_t));
     if (!srv) { kprintf("PULSAR-SRV: OOM allocating srv state\n"); kfree(ps); return; }
+    memset(srv, 0, sizeof(pulsar_srv_t));
+
+    uint8_t *send_buf = kmalloc(PULSAR_MSIZE);
+    uint8_t *recv_buf = kmalloc(PULSAR_MSIZE);
+    if (!send_buf || !recv_buf) {
+        kprintf("PULSAR-SRV: OOM allocating buffers\n");
+        if (send_buf) kfree(send_buf);
+        if (recv_buf) kfree(recv_buf);
+        kfree(srv); kfree(ps); return;
+    }
+    memset(send_buf, 0, PULSAR_MSIZE);
+    memset(recv_buf, 0, PULSAR_MSIZE);
 
     memset(ps,  0, sizeof(pulsar_session_t));
-    memset(srv, 0, sizeof(pulsar_srv_t));
 
     ps->srv_file = data_f;
     ps->msize    = PULSAR_MSIZE;
@@ -513,56 +522,56 @@ void pulsar_serve_session(file_t *data_f) {
 
     // ------------------------------------------------------------ EMIT_HAIL ------------------------------------------------------------ //
 
-    int len = pulse_recv(ps, srv->recv_buf);                                        // recieve message
+    int len = pulse_recv(ps, recv_buf);                                        // recieve message
     if (len < PULSAR_HDR) { kprintf("PULSAR-SRV: no HAIL\n"); return; }
 
     uint32_t pos  = 4;
-    uint8_t  type = get_u8 (srv->recv_buf, &pos);                                    // parse header
-    uint16_t tag  = get_u16(srv->recv_buf, &pos);
+    uint8_t  type = get_u8 (recv_buf, &pos);                                    // parse header
+    uint16_t tag  = get_u16(recv_buf, &pos);
 
     if (type != EMIT_HAIL) {                                                        // validate hail
         kprintf("PULSAR-SRV: expected HAIL got %u\n", type); return;
     }
 
-    uint32_t cli_msize = get_u32(srv->recv_buf, &pos);                               // extract client parameters
-    char     cli_ver[16]; get_str(srv->recv_buf, &pos, cli_ver, sizeof(cli_ver));
+    uint32_t cli_msize = get_u32(recv_buf, &pos);                               // extract client parameters
+    char     cli_ver[16]; get_str(recv_buf, &pos, cli_ver, sizeof(cli_ver));
 
     srv->msize = ps->msize = (cli_msize < PULSAR_MSIZE) ? cli_msize : PULSAR_MSIZE;   // negotiate size
 
     pos = 0;
-    pulse_begin(srv->send_buf, ECHO_HAIL, PULSAR_NOTAG, &pos);                       // send response
-    put_u32(srv->send_buf, &pos, srv->msize);
-    put_str(srv->send_buf, &pos, PULSAR_VERSION);
-    if (pulse_send(ps, srv->send_buf, pos) < 0) return;
+    pulse_begin(send_buf, ECHO_HAIL, PULSAR_NOTAG, &pos);                       // send response
+    put_u32(send_buf, &pos, srv->msize);
+    put_str(send_buf, &pos, PULSAR_VERSION);
+    if (pulse_send(ps, send_buf, pos) < 0) return;
     kprintf("PULSAR-SRV: HAIL ok  ver=%s msize=%u\n", cli_ver, srv->msize);
 
     // ------------------------------------------------------------ MAIN MESSAGE LOOP ------------------------------------------------------------ //
 
     for (;;) {                                                                      // read request -> decode type -> dispatch to handler
 
-        len = pulse_recv(ps, srv->recv_buf);
+        len = pulse_recv(ps, recv_buf);
         if (len < PULSAR_HDR) {
             kprintf("PULSAR-SRV: client disconnected\n"); break;
         }
 
         pos  = 4;
-        type = get_u8 (srv->recv_buf, &pos);
-        tag  = get_u16(srv->recv_buf, &pos);
+        type = get_u8 (recv_buf, &pos);
+        tag  = get_u16(recv_buf, &pos);
 
         switch (type) {
 
         // ---------------------------------------- EMIT_DOCK: attach client -> root directory ---------------------------------------- //
         case EMIT_DOCK: {
 
-            uint32_t root_id = get_u32(srv->recv_buf, &pos);                         // read inputs
-            get_u32(srv->recv_buf, &pos);
+            uint32_t root_id = get_u32(recv_buf, &pos);                         // read inputs
+            get_u32(recv_buf, &pos);
             char tmp[64];
-            get_str(srv->recv_buf, &pos, tmp, sizeof(tmp));
-            get_str(srv->recv_buf, &pos, tmp, sizeof(tmp));
+            get_str(recv_buf, &pos, tmp, sizeof(tmp));
+            get_str(recv_buf, &pos, tmp, sizeof(tmp));
 
             srv_beam_t *b = srv_alloc(srv, root_id);                               // create beam
             if (!b) {
-                srv_error(ps, srv->send_buf, tag, "no beams");
+                srv_error(ps, send_buf, tag, "no beams");
                 break;
             }
 
@@ -570,10 +579,10 @@ void pulsar_serve_session(file_t *data_f) {
             b->is_dir = 1;
 
             pos = 0;
-            pulse_begin(srv->send_buf, ECHO_DOCK, tag, &pos);                        // send response
+            pulse_begin(send_buf, ECHO_DOCK, tag, &pos);                        // send response
             pulsar_signat_t sig = { SIGNAT_DIR, 0, 1 };
-            put_signat(srv->send_buf, &pos, &sig);
-            pulse_send(ps, srv->send_buf, pos);
+            put_signat(send_buf, &pos, &sig);
+            pulse_send(ps, send_buf, pos);
             kprintf("PULSAR-SRV: DOCK root_beam=%u\n", root_id);
             break;
         }
@@ -581,12 +590,12 @@ void pulsar_serve_session(file_t *data_f) {
         // ---------------------------------------- EMIT_TRAVERSE: walk path components ---------------------------------------- //
         case EMIT_TRAVERSE: {
 
-            uint32_t src_id  = get_u32(srv->recv_buf, &pos);                         // read inputs
-            uint32_t new_id  = get_u32(srv->recv_buf, &pos);
-            uint16_t ncomp   = get_u16(srv->recv_buf, &pos);
+            uint32_t src_id  = get_u32(recv_buf, &pos);                         // read inputs
+            uint32_t new_id  = get_u32(recv_buf, &pos);
+            uint16_t ncomp   = get_u16(recv_buf, &pos);
 
             srv_beam_t *src = srv_get(srv, src_id);                                // lookup source
-            if (!src) { srv_error(ps, srv->send_buf, tag, "bad src beam"); break; }
+            if (!src) { srv_error(ps, send_buf, tag, "bad src beam"); break; }
 
             char     new_path[VFS_PATH_MAX];                                        // initialise working state
             strncpy(new_path, src->path, VFS_PATH_MAX - 1);
@@ -599,7 +608,7 @@ void pulsar_serve_session(file_t *data_f) {
             for (uint16_t i = 0; i < ncomp && nwqid < 16; i++) {                    // walk loop
 
                 char comp[VFS_NAME_MAX];
-                get_str(srv->recv_buf, &pos, comp, sizeof(comp));                    // read component
+                get_str(recv_buf, &pos, comp, sizeof(comp));                    // read component
 
                 char try_path[VFS_PATH_MAX];
                 if (strcmp(new_path, "/") == 0) {                                   // build candidate path
@@ -634,55 +643,55 @@ void pulsar_serve_session(file_t *data_f) {
             }
 
             pos = 0;
-            pulse_begin(srv->send_buf, ECHO_TRAVERSE, tag, &pos);
-            put_u16(srv->send_buf, &pos, nwqid);                                     // send response
+            pulse_begin(send_buf, ECHO_TRAVERSE, tag, &pos);
+            put_u16(send_buf, &pos, nwqid);                                     // send response
             for (uint16_t i = 0; i < nwqid; i++)
-                put_signat(srv->send_buf, &pos, &qids[i]);
-            pulse_send(ps, srv->send_buf, pos);
+                put_signat(send_buf, &pos, &qids[i]);
+            pulse_send(ps, send_buf, pos);
             break;
         }
 
         // ---------------------------------------- EMIT_OPEN: open a file ---------------------------------------- //
         case EMIT_OPEN: {
 
-            uint32_t beam_id = get_u32(srv->recv_buf, &pos);                                     // read input
-            get_u8(srv->recv_buf, &pos);
+            uint32_t beam_id = get_u32(recv_buf, &pos);                                     // read input
+            get_u8(recv_buf, &pos);
 
             srv_beam_t *b = srv_get(srv, beam_id);                                             // lookup beam
             if (!b) {
-                srv_error(ps, srv->send_buf, tag, "bad beam");
+                srv_error(ps, send_buf, tag, "bad beam");
                 break;
             }
 
             b->opened = 1;                                                                      // mark opened
 
             pos = 0;
-            pulse_begin(srv->send_buf, ECHO_OPEN, tag, &pos);
+            pulse_begin(send_buf, ECHO_OPEN, tag, &pos);
             pulsar_signat_t sig = { b->is_dir ? SIGNAT_DIR : 0, 0, (uint64_t)(uintptr_t)b };    // send response
-            put_signat(srv->send_buf, &pos, &sig);
-            put_u32(srv->send_buf, &pos, srv->msize - PULSAR_HDR - 11);                           // iounit: max bytes per read/write
-            pulse_send(ps, srv->send_buf, pos);
+            put_signat(send_buf, &pos, &sig);
+            put_u32(send_buf, &pos, srv->msize - PULSAR_HDR - 11);                           // iounit: max bytes per read/write
+            pulse_send(ps, send_buf, pos);
             break;
         }
 
         // ---------------------------------------- EMIT_READ: read a file/directory ---------------------------------------- //
         case EMIT_READ: {
 
-            uint32_t beam_id = get_u32(srv->recv_buf, &pos);                             // read inputs
-            uint64_t offset  = get_u64(srv->recv_buf, &pos);
-            uint32_t count   = get_u32(srv->recv_buf, &pos);
+            uint32_t beam_id = get_u32(recv_buf, &pos);                             // read inputs
+            uint64_t offset  = get_u64(recv_buf, &pos);
+            uint32_t count   = get_u32(recv_buf, &pos);
 
             srv_beam_t *b = srv_get(srv, beam_id);                                     // lookup beam
             if (!b || !b->opened) {
-                srv_error(ps, srv->send_buf, tag, "bad beam");
+                srv_error(ps, send_buf, tag, "bad beam");
                 break;
             }
 
             uint32_t max_data = srv->msize - (PULSAR_HDR + 4);                           // clamp size
             if (count > max_data) count = max_data;
 
-            uint8_t tmp[PULSAR_MSIZE];
             int     nr = 0;
+            uint8_t *tmp = recv_buf;
 
             if (b->is_dir) {                                                            // case 1: DIRECTORY
 
@@ -712,48 +721,48 @@ void pulsar_serve_session(file_t *data_f) {
             }
 
             pos = 0;
-            pulse_begin(srv->send_buf, ECHO_READ, tag, &pos);
-            put_u32(srv->send_buf, &pos, (uint32_t)nr);                                  // send response
-            memcpy(srv->send_buf + pos, tmp, (uint32_t)nr);
+            pulse_begin(send_buf, ECHO_READ, tag, &pos);
+            put_u32(send_buf, &pos, (uint32_t)nr);                                  // send response
+            memcpy(send_buf + pos, tmp, (uint32_t)nr);
             pos += (uint32_t)nr;
-            pulse_send(ps, srv->send_buf, pos);
+            pulse_send(ps, send_buf, pos);
             break;
         }
 
         // ---------------------------------------- EMIT_WRITE: write client data -> file ---------------------------------------- //
         case EMIT_WRITE: {
 
-            uint32_t beam_id = get_u32(srv->recv_buf, &pos);                                 // read inputs
-            get_u64(srv->recv_buf, &pos);
-            uint32_t count = get_u32(srv->recv_buf, &pos);
+            uint32_t beam_id = get_u32(recv_buf, &pos);                                 // read inputs
+            get_u64(recv_buf, &pos);
+            uint32_t count = get_u32(recv_buf, &pos);
 
             srv_beam_t *b = srv_get(srv, beam_id);                                         // lookup beam
             if (!b || !b->opened) {
-                srv_error(ps, srv->send_buf, tag, "bad beam");
+                srv_error(ps, send_buf, tag, "bad beam");
                 break;
             }
 
             int nw = 0;
             file_t *wf = vfs_open(b->path, O_WRONLY);                                       // open file
             if (wf) {
-                nw = vfs_write(wf, srv->recv_buf + pos, count);                              // write to file
+                nw = vfs_write(wf, recv_buf + pos, count);                              // write to file
                 if (nw < 0) nw = 0;
                 vfs_close(wf);
             }
 
             pos = 0;
-            pulse_begin(srv->send_buf, ECHO_WRITE, tag, &pos);
-            put_u32(srv->send_buf, &pos, (uint32_t)nw);                                      // return bytes written
-            pulse_send(ps, srv->send_buf, pos);
+            pulse_begin(send_buf, ECHO_WRITE, tag, &pos);
+            put_u32(send_buf, &pos, (uint32_t)nw);                                      // return bytes written
+            pulse_send(ps, send_buf, pos);
             break;
         }
 
         // ---------------------------------------- EMIT_SCAN (stat): return file metadata ---------------------------------------- //
         case EMIT_SCAN: {
 
-            uint32_t beam_id = get_u32(srv->recv_buf, &pos);
+            uint32_t beam_id = get_u32(recv_buf, &pos);
             srv_beam_t *b = srv_get(srv, beam_id);                                         // lookup beam
-            if (!b) { srv_error(ps, srv->send_buf, tag, "bad beam"); break; }
+            if (!b) { srv_error(ps, send_buf, tag, "bad beam"); break; }
 
             const char *name = b->path;                                                     // extract name
             for (const char *p = b->path; *p; p++) if (*p == '/') name = p + 1;
@@ -763,29 +772,29 @@ void pulsar_serve_session(file_t *data_f) {
             uint32_t slen = srv_build_stat(name, b->is_dir, 0, stat_buf, sizeof(stat_buf)); // build stat
 
             pos = 0;
-            pulse_begin(srv->send_buf, ECHO_SCAN, tag, &pos);
-            put_u16(srv->send_buf, &pos, (uint16_t)slen);                                    // send [length][stat data]
-            memcpy(srv->send_buf + pos, stat_buf, slen);
+            pulse_begin(send_buf, ECHO_SCAN, tag, &pos);
+            put_u16(send_buf, &pos, (uint16_t)slen);                                    // send [length][stat data]
+            memcpy(send_buf + pos, stat_buf, slen);
             pos += slen;
-            pulse_send(ps, srv->send_buf, pos);
+            pulse_send(ps, send_buf, pos);
             break;
         }
 
         // ---------------------------------------- EMIT_RELEASE: destroy beam ---------------------------------------- //
         case EMIT_RELEASE: {
 
-            uint32_t beam_id = get_u32(srv->recv_buf, &pos);                // read beam ID
+            uint32_t beam_id = get_u32(recv_buf, &pos);                // read beam ID
             srv_free(srv_get(srv, beam_id));                                // lookup beam + free beam
 
             pos = 0;
-            pulse_begin(srv->send_buf, ECHO_RELEASE, tag, &pos);            // send response
-            pulse_send(ps, srv->send_buf, pos);
+            pulse_begin(send_buf, ECHO_RELEASE, tag, &pos);            // send response
+            pulse_send(ps, send_buf, pos);
             break;
         }
 
         default:
             kprintf("PULSAR-SRV: unknown type=%u tag=%u\n", type, tag);
-            srv_error(ps, srv->send_buf, tag, "unknown message");
+            srv_error(ps, send_buf, tag, "unknown message");
             break;
         }
     }
@@ -793,7 +802,8 @@ void pulsar_serve_session(file_t *data_f) {
     for (int i = 0; i < SRV_BEAM_MAX; i++) {
         srv_free(&srv->beams[i]);
     }
-
+    kfree(recv_buf);
+    kfree(send_buf);
     kfree(ps);
     kfree(srv);
 
@@ -999,17 +1009,23 @@ static int pulsar_vfs_close(vnode_t *v) {
     pulsar_vdata_t *vd = (pulsar_vdata_t *)v->data;                     // beam data lookup
     if (!vd) return 0;
 
-    pulsar_release(vd->session, vd->beam);                              // release the beam on the server side
+    // NOTE: do NOT release the beam or free vd here.
+    // The beam and vd belong to the vnode's lifetime (i.e. while the mount
+    // is active in the namespace), not to an individual open/close cycle.
+    // Releasing the beam here destroys the mount point after the first
+    // access, causing all subsequent opens of /remote to fail.
+    // Beam release happens in pulsar_session_destroy() at unmount time.
 
     if (vd->dir_names) {                                                // free directory name cache
-        for (uint32_t i = 0; i < vd->dir_count; i++) {                  // for each name
-            if (vd->dir_names[i]) kfree(vd->dir_names[i]);              // free directory name
+        for (uint32_t i = 0; i < vd->dir_count; i++) {
+            if (vd->dir_names[i]) kfree(vd->dir_names[i]);
         }
         kfree(vd->dir_names);
-        vd->dir_names = 0;                                              // free array
+        vd->dir_names = 0;
     }
-    kfree(vd);                                                          // free vnode data
-    v->data = 0;
+    vd->dir_count   = 0;
+    vd->dir_loaded  = 0;                                                // allow cache rebuild on next readdir
+    vd->beam_opened = 0;                                                // allow re-open on next access
     return 0;
 }
 
@@ -1098,7 +1114,7 @@ static int pulsar_vfs_readdir(vnode_t *dir, uint32_t index, char *name_out, vnod
                 if (p + 2 + stat_size > (uint32_t)n) break;                             // ensure record fits inside buffer
 
                 // offset -> name string = inner_size[2] type[2] dev[4] qid[13] mode[4] atime[4] mtime[4] length[8] = 41 bytes, then name count[2]
-                uint32_t name_off = p + 2 + 2 + 2 + 4 + 13 + 4 + 4 + 4 + 8;             // name offset
+                uint32_t name_off = p + 2 + 2 + 4 + 13 + 4 + 4 + 4 + 8;                 // name offset (= p+41)
                 if (name_off + 2 > (uint32_t)n) { p += 2 + stat_size; continue; }
 
                 uint16_t nlen = (uint16_t)rbuf[name_off] | ((uint16_t)rbuf[name_off + 1] << 8);     // read name length

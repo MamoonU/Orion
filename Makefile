@@ -226,7 +226,10 @@ clean:
 	       $(USER_SH_ELF) $(USER_SH_BIN_O) myos myos.iso
 	@rm -rf isodir
 
-# Single instance - general dev
+QEMU_FLAGS := -cdrom myos.iso -serial stdio -no-reboot -m 128M
+QEMU_NET   := -netdev socket,id=net0,mcast=230.0.0.1:1234
+
+# Single instance - general dev (keep as-is)
 run:
 	@qemu-system-i386 \
 		-cdrom myos.iso \
@@ -235,14 +238,22 @@ run:
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0
 
-QEMU_FLAGS := -cdrom myos.iso -serial stdio -no-reboot -m 128M
-
 run-a:
 	@qemu-system-i386 $(QEMU_FLAGS) \
-		-netdev socket,id=net0,listen=:1234 \
+		$(QEMU_NET) \
 		-device virtio-net-pci,netdev=net0,mac=52:54:00:00:00:0A
 
 run-b:
 	@qemu-system-i386 $(QEMU_FLAGS) \
-		-netdev socket,id=net0,connect=127.0.0.1:1234 \
+		$(QEMU_NET) \
 		-device virtio-net-pci,netdev=net0,mac=52:54:00:00:00:0B
+
+run-c:
+	@qemu-system-i386 $(QEMU_FLAGS) \
+		$(QEMU_NET) \
+		-device virtio-net-pci,netdev=net0,mac=52:54:00:00:00:0C
+
+run-d:
+	@qemu-system-i386 $(QEMU_FLAGS) \
+		$(QEMU_NET) \
+		-device virtio-net-pci,netdev=net0,mac=52:54:00:00:00:0D

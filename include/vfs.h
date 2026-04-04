@@ -93,6 +93,8 @@ file_t *vfs_open(const char *path, int flags);
 // open pre-resolved vnode
 file_t *vfs_open_vnode(vnode_t *v, int flags);
 
+file_t *vfs_open_vnode_at(vnode_t *v, int flags, const char *path);
+
 // close an open file
 void vfs_close(file_t *f);
 

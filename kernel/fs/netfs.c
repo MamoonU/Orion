@@ -33,8 +33,13 @@
 #include "lwip/pbuf.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/netif.h"
+#include "lwip/dhcp.h"
+#include "lwip_orion.h"
 
 #include "virtio_net.h"
+
+// forward declaration
+void build_path(char *out, uint32_t outsz, const char *base, uint32_t slot, const char *suffix);
 
 // constants
 #define NETFS_TCP_MAX    8                      // max TCP connections
@@ -394,6 +399,27 @@ static int tcp_clone_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
     return (int)n;
 }
 
+// per-connection handoff table
+#define PULSAR_HANDOFF_MAX 8
+static file_t *pulsar_handoff[PULSAR_HANDOFF_MAX];
+
+static void pulsar_client_entry(void) {
+
+    pcb_t *self = sched_current();
+    uint32_t idx = (uint32_t)self->pid % PULSAR_HANDOFF_MAX;
+
+    file_t *data_f = pulsar_handoff[idx];
+    pulsar_handoff[idx] = 0;
+
+    if (!data_f) {
+        kprintf("PULSAR-CLIENT: no handoff file\n");
+        return;
+    }
+
+    pulsar_serve_session(data_f);
+    vfs_close(data_f);
+}
+
 // control plane: TCP operations occur -> writing commands
 static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off) {
 
@@ -408,6 +434,13 @@ static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off
     trim_ws(cmd);
 
     if (strncmp(cmd, "connect ", 8) == 0) {                                         // 1. connect ip!port
+
+        if (ip4_addr_isany(netif_ip4_addr(netif_default))) {
+            kprintf("NETFS: connect: no IP configured\n");
+            c->state = CONN_ALLOCATED;
+            c->blocked_connector = NETFS_NO_WAITER;
+            return -1;
+        }
 
         if (c->state != CONN_ALLOCATED) return -1;
         ip4_addr_t rip; uint16_t rport;
@@ -434,6 +467,7 @@ static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off
             sched_remove(self);
             while (self->state == PROC_BLOCKED) {
                 asm volatile("sti; hlt; cli" ::: "memory");
+                lwip_orion_poll();
             }
             self->state = PROC_RUNNING;
         } else {
@@ -537,16 +571,38 @@ static int tcp_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off
                 continue;
             }
 
-            pulsar_serve_session(data_f);
-            vfs_close(data_f);
+            // find a free handoff slot
+            uint32_t hidx = ~0u;
+            for (uint32_t h = 0; h < PULSAR_HANDOFF_MAX; h++) {
+                if (!pulsar_handoff[h]) { hidx = h; break; }
+            }
+            if (hidx == ~0u) {
+                kprintf("NETFS: serve - handoff table full, dropping client\n");
+                vfs_close(data_f);
+                nc->state = CONN_FREE;
+                continue;
+            }
 
-            if (nc->pcb && nc->state == CONN_ESTABLISHED)
-                tcp_close(nc->pcb);
-            else if (nc->pcb)
-                tcp_abort(nc->pcb);
+            pulsar_handoff[hidx] = data_f;
 
-            nc->pcb   = 0;
-            nc->state = CONN_FREE;
+            pcb_t *handler = proc_create("pulsar-client", PROC_PRIO_NORMAL);
+            if (!handler) {
+                kprintf("NETFS: serve - proc_create failed\n");
+                pulsar_handoff[hidx] = 0;
+                vfs_close(data_f);
+                nc->state = CONN_FREE;
+                continue;
+            }
+
+            // re-slot using the new process pid
+            pulsar_handoff[hidx] = 0;
+            uint32_t pidx = (uint32_t)handler->pid % PULSAR_HANDOFF_MAX;
+            pulsar_handoff[pidx] = data_f;
+
+            proc_init_frame(handler, (uint32_t)pulsar_client_entry);
+            proc_set_ready(handler);
+            sched_add(handler);
+            // serve loop continues
         }
         return (int)len;
     }
@@ -750,10 +806,11 @@ static int udp_data_write(vnode_t *v, const void *buf, uint32_t len, uint32_t of
     memcpy(p->payload, buf, len);                                               // copy data
 
     err_t e;
-    if (ip4_addr_isany_val(c->remote_ip))                                       // send data
-        e = udp_sendto(c->pcb, p, &c->remote_ip, c->remote_port);
-    else
-        e = udp_send(c->pcb, p);
+    if (ip4_addr_isany_val(c->remote_ip)) {
+        pbuf_free(p);
+        return -1;          // no destination set, refuse to send
+    }
+    e = udp_send(c->pcb, p);
 
     pbuf_free(p);                                                               // free buffer
     return (e == ERR_OK) ? (int)len : -1;
@@ -881,6 +938,37 @@ static int ipifc_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t o
         netif_set_up(netif_default);
         kprintf("NETFS: ipifc: static IP configured\n");
         return (int)len;
+
+    } else if (strcmp(cmd, "dhcp") == 0) {
+
+        if (!netif_default) return -1;
+
+        err_t e = dhcp_start(netif_default);
+        if (e != ERR_OK) {
+            kprintf("NETFS: ipifc: dhcp_start failed %d\n", e);
+            return -1;
+        }
+
+        kprintf("NETFS: ipifc: DHCP started, waiting for lease...\n");
+
+        // poll lwIP until DHCP supplies an address (or 10 second timeout)
+        uint32_t ticks = 0;
+        while (!dhcp_supplied_address(netif_default) && ticks < 1000) {
+            asm volatile("sti; hlt; cli" ::: "memory");
+            lwip_orion_poll();
+            ticks++;
+        }
+
+        if (!dhcp_supplied_address(netif_default)) {
+            kprintf("NETFS: ipifc: DHCP timed out\n");
+            return -1;
+        }
+
+        kprintf("LWIP: IP  %s\n", ip4addr_ntoa(netif_ip4_addr(netif_default)));
+        kprintf("LWIP: GW  %s\n", ip4addr_ntoa(netif_ip4_gw(netif_default)));
+        kprintf("NETFS: ipifc: DHCP lease acquired\n");
+        return (int)len;
+
     }
     return -1;
 }

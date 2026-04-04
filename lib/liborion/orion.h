@@ -34,6 +34,7 @@
 #define SYS_SIGRETURN   23
 #define SYS_KILL        24
 #define SYS_DIAL        25
+#define SYS_SEEK        26
 
 // open flags (from vfs.h)
 #define O_RDONLY    0x00
@@ -132,6 +133,7 @@ int     dup2   (int oldfd, int newfd);                                      // d
 int     chdir  (const char *path);                                          // change working directory
 int     getcwd (char *buf, uint32_t len);                                   // return working directory
 int     readdir(int fd, uint32_t index, char *name_buf, uint32_t buflen);   // read directories by index
+int32_t lseek  (int fd, int32_t offset, int whence);                        // seek within file
 
 // namespace
 int     bind   (const char *src, const char *dst, uint8_t flags);           // mount path -> another

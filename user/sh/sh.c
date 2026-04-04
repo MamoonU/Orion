@@ -156,9 +156,16 @@ static void builtin_cd(int argc, char **argv) {
 // ls [path] = list directory
 static void builtin_ls(int argc, char **argv) {
 
+    int long_fmt = 0;
+    const char *target = 0;                             // resolve target: no args = list cwd
     char cwd[256];
     getcwd(cwd, sizeof(cwd));
-    const char *target = (argc >= 2) ? argv[1] : cwd;   // resolve target: no args = list cwd
+
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-' && argv[i][1] == 'l') long_fmt = 1;
+        else if (!target) target = argv[i];
+    }
+    if (!target) target = cwd;
 
     int fd = open(target, O_RDONLY);                    // open the directory as a file: vfs_open on dir gives file_t that sys_readdir can iterate
     if (fd < 0) {
@@ -172,15 +179,59 @@ static void builtin_ls(int argc, char **argv) {
     uint32_t index = 0;                                 // entry number
     int      count = 0;
 
-    while (readdir(fd, index, name_buf, (uint32_t)sizeof(name_buf)) == 0) {     // iterate entries
-        sh_write("  ");
-        sh_write(name_buf);
-        sh_putchar('\n');
+    while (readdir(fd, index, name_buf, sizeof(name_buf)) == 0) {
+
+        if (long_fmt) {
+
+            // build full child path
+            char child[256];
+            uint32_t tlen = (uint32_t)strlen(target);
+            strncpy(child, target, sizeof(child) - 1);
+            child[sizeof(child) - 1] = '\0';
+            if (tlen > 0 && child[tlen - 1] != '/') {
+                child[tlen] = '/'; child[tlen + 1] = '\0';
+            }
+            strncat(child, name_buf, sizeof(child) - strlen(child) - 1);
+
+            char type_c = '?';
+            int  size   = 0;
+
+            int cfd = open(child, O_RDONLY);
+            if (cfd >= 0) {
+                char tmp[32];
+                if (readdir(cfd, 0, tmp, sizeof(tmp)) == 0) {
+                    type_c = 'd';                                           // readdir succeeded = directory
+                } else {
+                    type_c = 'f';
+                    int32_t sz = (int32_t)lseek(cfd, 0, 2);                 // SEEK_END = 2
+                    if (sz >= 0) size = (int)sz;
+                }
+                close(cfd);
+            }
+
+            char size_s[16];
+            snprintf(size_s, sizeof(size_s), "%d", size);
+            uint32_t slen = (uint32_t)strlen(size_s);
+
+            sh_putchar(type_c);
+            sh_write("  ");
+            for (uint32_t p = slen; p < 8; p++) sh_putchar(' ');            // right-align size
+            sh_write(size_s);
+            sh_write("  ");
+            sh_write(name_buf);
+            sh_putchar('\n');
+
+        } else {
+            sh_write("  ");
+            sh_write(name_buf);
+            sh_putchar('\n');
+        }
+
         index++;
         count++;
     }
 
-    if (count == 0) sh_write("  (empty)\n");            // empty directory handling
+    if (count == 0) sh_write("  (empty)\n");
     close(fd);
 }
 
@@ -445,40 +496,8 @@ static void builtin_mount(int argc, char **argv) {
 }
 
 static void builtin_serve(void) {
-
-    sh_write("serve: starting PULSAR server on port 564...\n");
-
-    // get a free TCP slot
-    int fd = open("/net/tcp/clone", O_RDONLY);
-    if (fd < 0) { sh_write("serve: cannot open /net/tcp/clone\n"); return; }
-    char slot[16];
-    int n = read(fd, slot, sizeof(slot) - 1);
-    close(fd);
-    if (n <= 0) { sh_write("serve: no free TCP slots\n"); return; }
-    slot[n] = '\0';
-    int slen = n;
-    while (slen > 0 && (slot[slen-1] == '\n' || slot[slen-1] == '\r' || slot[slen-1] == ' '))
-        slot[--slen] = '\0';
-
-    // build ctl path
-    char ctl[64];
-    strcpy(ctl, "/net/tcp/");
-    strcat(ctl, slot);
-    strcat(ctl, "/ctl");
-
-    // announce *!564
-    fd = open(ctl, O_WRONLY);
-    if (fd < 0) { sh_write("serve: cannot open ctl\n"); return; }
-    write(fd, "announce *!564", 14);
-    close(fd);
-
-    sh_write("serve: listening on port 564\n");
-
-    // enter serve loop (blocks until killed)
-    fd = open(ctl, O_WRONLY);
-    if (fd < 0) { sh_write("serve: cannot reopen ctl\n"); return; }
-    write(fd, "serve", 5);
-    close(fd);
+    sh_write("serve: PULSAR server is a kernel process (port 564)\n");
+    sh_write("serve: use 'cat /net/tcp/0/status' to check state\n");
 }
 
 static const char *g_exec_path = 0;             // shared variable between parent & child: set by sh_exec before fork
@@ -522,6 +541,26 @@ static void sh_exec_external(int argc, char **argv) {
     g_exec_path = 0;
 }
 
+// scan line for > operator, split line in place, return path to redirect target
+static int sh_parse_redirect(char *line, char **redir_out) {
+
+    *redir_out = 0;
+
+    for (char *p = line; *p; p++) {
+        if (*p == '>') {
+            *p = '\0';                          // terminate command at >
+            p++;
+            while (*p == ' ') p++;              // skip spaces after >
+            if (!*p) return 0;                  // nothing after >, ignore
+            *redir_out = p;
+            char *end = p + strlen(p) - 1;
+            while (end > p && *end == ' ') *end-- = '\0'; // strip trailing spaces
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // command dispatcher
 static void sh_dispatch(int argc, char **argv) {
 
@@ -549,6 +588,76 @@ static void sh_dispatch(int argc, char **argv) {
     else sh_exec_external(argc, argv);                          // fallback: unknown = /bin/<cmd>
 }
 
+static void wizard_host(void) {
+
+    sh_write("\n  -- Host Setup --\n");
+    sh_write("  Enter IP address   (e.g. 10.0.0.1): ");
+    char ip[64];
+    sh_readline(ip, sizeof(ip));
+
+    sh_write("  Enter subnet mask  (e.g. 255.255.255.0): ");
+    char mask[64];
+    sh_readline(mask, sizeof(mask));
+
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "add %s %s", ip, mask);
+
+    int fd = open("/net/ipifc/0/ctl", O_WRONLY);
+    if (fd < 0) { sh_write("  error: cannot open /net/ipifc/0/ctl\n"); return; }
+    write(fd, cmd, (uint32_t)strlen(cmd));
+    close(fd);
+
+    sh_write("  IP configured.\n");
+    sh_write("  PULSAR server running on port 564.\n");
+    sh_write("  Clients should dial: ");
+    sh_write(ip);
+    sh_write("!564\n");
+}
+
+static void wizard_client(void) {
+
+    sh_write("\n  -- Client Setup --\n");
+    sh_write("  Enter your IP address  (e.g. 10.0.0.2): ");
+    char ip[64];
+    sh_readline(ip, sizeof(ip));
+
+    sh_write("  Enter subnet mask      (e.g. 255.255.255.0): ");
+    char mask[64];
+    sh_readline(mask, sizeof(mask));
+
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "add %s %s", ip, mask);
+
+    int fd = open("/net/ipifc/0/ctl", O_WRONLY);
+    if (fd < 0) { sh_write("  error: cannot open /net/ipifc/0/ctl\n"); return; }
+    write(fd, cmd, (uint32_t)strlen(cmd));
+    close(fd);
+
+    sh_write("  IP configured.\n");
+
+    while (1) {
+        sh_write("  Host to mount (e.g. 10.0.0.1!564) or blank to finish: ");
+        char addr[64];
+        sh_readline(addr, sizeof(addr));
+        if (addr[0] == '\0') break;
+
+        sh_write("  Mount point (e.g. /remote): ");
+        char mpath[64];
+        sh_readline(mpath, sizeof(mpath));
+        if (mpath[0] == '\0') { sh_write("  skipped.\n"); continue; }
+
+        sh_write("  Mounting ");
+        sh_write(addr);
+        sh_write(" at ");
+        sh_write(mpath);
+        sh_write(" ...\n");
+
+        int rc = dial(addr, mpath, NS_BIND_REPLACE);
+        if (rc < 0) sh_write("  mount failed.\n");
+        else        sh_write("  mounted ok.\n");
+    }
+}
+
 // entry point
 int main(int argc, char **argv) {
 
@@ -556,6 +665,29 @@ int main(int argc, char **argv) {
     (void)argv;
 
     signal(SIGINT, SIG_IGN);                                    // shell ignores SIGINT: only foreground children die on Ctrl+C
+
+
+    // ── CONFIGURATION WIZARD ──────────────────────────────────
+    sh_write("OrionOS Network Setup\n");
+    sh_write("\n");
+    sh_write("----------------------------------------\n");
+    sh_write("|  [h] Host   - serve your filesystem  |\n");
+    sh_write("|  [c] Client - mount a host           |\n");
+    sh_write("|  [s] Skip   - manual shell           |\n");
+    sh_write("----------------------------------------\n");
+    sh_write("\n");
+    sh_write("  choice: ");
+
+    char wizard_choice[4];
+    sh_readline(wizard_choice, sizeof(wizard_choice));
+
+    if (wizard_choice[0] == 'h' || wizard_choice[0] == 'H') {
+        wizard_host();
+    } else if (wizard_choice[0] == 'c' || wizard_choice[0] == 'C') {
+        wizard_client();
+    }
+
+    sh_write("\033[2J\033[H");
 
     sh_write(
     // "\n"
@@ -617,20 +749,46 @@ int main(int argc, char **argv) {
     "       ____\\///\\\\\\\\\\/______\\/\\\\\\__________\\/\\\\\\___\\///\\\\\\\\\\/____\\/\\\\\\___\\/\\\\\\__\n"
     "        ______\\/////________\\///___________\\///______\\/////______\\///____\\///___\n"
     "\n"
-    
-    "Orion Shell [ring-3] - type 'help' for commands\n"
     );
 
-    char  line[SH_LINE_MAX];                                    // line input buffer max = 256
-    char *argv_buf[SH_ARGV_MAX];                                // args max              = 16
+    sh_write("\nOrion Shell [ring-3] - type 'help' for commands\n");
+
+    char  line[SH_LINE_MAX];
+    char *argv_buf[SH_ARGV_MAX];
 
     while (1) {
-        sh_print_prompt();                                      // print prompt
-        sh_readline(line, SH_LINE_MAX);                         // read input
-        int ac = sh_tokenise(line, argv_buf, SH_ARGV_MAX);      // tokenise input
-        if (ac == 0) continue;                                  // skip empty
-        sh_dispatch(ac, argv_buf);                              // execute
+        sh_print_prompt();
+        sh_readline(line, SH_LINE_MAX);
+
+        char *redir_path = 0;
+        sh_parse_redirect(line, &redir_path);       // split off > target before tokenising
+
+        int ac = sh_tokenise(line, argv_buf, SH_ARGV_MAX);
+        if (ac == 0) continue;
+
+        int saved_stdout = -1;
+        if (redir_path) {
+            int rfd = open(redir_path, O_WRONLY | O_CREAT | O_TRUNC);
+            if (rfd < 0) {
+                sh_write("sh: cannot open redirect: ");
+                sh_write(redir_path);
+                sh_putchar('\n');
+                continue;
+            }
+            saved_stdout = dup2(1, 15);             // save stdout to slot 15
+            dup2(rfd, 1);                           // point stdout at file
+            close(rfd);
+        }
+
+        sh_dispatch(ac, argv_buf);
+
+        if (saved_stdout >= 0) {
+            dup2(saved_stdout, 1);                  // restore stdout
+            close(saved_stdout);
+            saved_stdout = -1;
+        }
     }
-    return 0;                                                   // unreachable: _exit() called on "exit" command
+    return 0;
 }
+
  

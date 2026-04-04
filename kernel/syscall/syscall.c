@@ -128,7 +128,7 @@ static int32_t sys_open(regs_t *r) {
         return fd;
     }
 
-    file_t *f = vfs_open(path, flags);
+    file_t *f = vfs_open_vnode_at(v, flags, resolved);
     if (!f) return -1;
 
     int fd = fd_install(p->fd_table, f);

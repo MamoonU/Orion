@@ -28,6 +28,7 @@
 #include "netfs.h"
 #include "procfs.h"
 #include "elf.h"
+#include "string.h"
 
 #if defined(__linux__)
     #error "Must be compiled with a cross-compiler"
@@ -130,6 +131,13 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     proc_init_frame(idle, (uint32_t)idle_process);
     proc_set_ready(idle);
     sched_add(idle);
+
+
+    pcb_t *srv = proc_create("pulsar-srv", PROC_PRIO_NORMAL);
+    kassert(srv != 0);
+    proc_init_frame(srv, (uint32_t)pulsar_server_process);
+    proc_set_ready(srv);
+    sched_add(srv);
 
     // embed shell ELF (objcopy symbols) into ramfs at /bin/sh
     extern uint8_t _binary_user_sh_sh_elf_start[];
