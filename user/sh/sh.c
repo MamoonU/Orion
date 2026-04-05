@@ -504,6 +504,7 @@ static const char *g_exec_path = 0;             // shared variable between paren
 
 // runs in child process
 static void exec_child(void) {
+    signal(SIGINT, SIG_DFL);
     execve(g_exec_path);                        // replace child image with ELF from /bin/<cmd>
     sh_write("exec: execve failed\n");
     _exit(127);
@@ -665,7 +666,7 @@ int main(int argc, char **argv) {
     (void)argv;
 
     signal(SIGINT, SIG_IGN);                                    // shell ignores SIGINT: only foreground children die on Ctrl+C
-
+    signal(SIGCHLD, SIG_IGN);                                   // shell ignores SIGCHLD: child exit does not kill the shell
 
     // ── CONFIGURATION WIZARD ──────────────────────────────────
     sh_write("OrionOS Network Setup\n");

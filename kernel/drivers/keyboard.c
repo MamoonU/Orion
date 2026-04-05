@@ -92,6 +92,7 @@ int keyboard_has_char(void) {
 
 static int shift_held  = 0;                                                     // shift key
 static int caps_lock   = 0;                                                     // caps lock toggle
+static int ctrl_held = 0;                                                       // ctrl key
 
 void keyboard_handler(regs_t *r) {
 
@@ -105,6 +106,22 @@ void keyboard_handler(regs_t *r) {
 
     if (key == 0x2A || key == 0x36) {                                           // left / right shift
         shift_held = !released;
+        return;
+    }
+
+    if (key == 0x1D) {                                                          // left ctrl press/release
+        ctrl_held = !released;
+        return;
+    }
+
+    if (!released && ctrl_held && key == 0x2E) {    // Ctrl+C: broadcast SIGINT to all user processes
+        for (pid_t i = 0; i < MAX_PROCS; i++) {
+            pcb_t *p = proc_get(i);
+            if (!p) continue;
+            if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
+            if (!p->page_directory) continue;      // skip kernel processes (no user address space)
+            p->pending_signals |= (1u << 2);       // SIGINT = 2
+        }
         return;
     }
 

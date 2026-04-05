@@ -150,6 +150,16 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     vfs_write(sh_file, _binary_user_sh_sh_elf_start, sh_elf_size);
     vfs_close(sh_file);
 
+    // embed top ELF into ramfs at /bin/top
+    extern uint8_t _binary_user_otop_otop_elf_start[];
+    extern uint8_t _binary_user_otop_otop_elf_end[];
+    uint32_t otop_elf_size = (uint32_t)(_binary_user_otop_otop_elf_end - _binary_user_otop_otop_elf_start);
+
+    file_t *otop_file = vfs_open("/bin/otop", O_CREAT | O_WRONLY);
+    kassert(otop_file != 0);
+    vfs_write(otop_file, _binary_user_otop_otop_elf_start, otop_elf_size);
+    vfs_close(otop_file);
+
     // launch shell as ring-3 process
     pcb_t *sh = proc_create("orion-sh", PROC_PRIO_NORMAL);
     kassert(sh != 0);

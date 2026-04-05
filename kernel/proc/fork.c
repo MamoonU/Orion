@@ -17,9 +17,11 @@ static int copy_address_space(uint32_t dst_pd_phys, uint32_t src_pd_phys) {
     uint32_t *src_pd = (uint32_t *)src_pd_phys;                                                 // source PD
     uint32_t *dst_pd = (uint32_t *)dst_pd_phys;                                                 // destination PD
 
-    for (int pde = VMM_KERNEL_PDE_END; pde < 1024; pde++) {                                     // walk user space PDEs
+    for (int pde = 0; pde < 1024; pde++) {                                                      // walk user space PDEs
 
         if (!(src_pd[pde] & VMM_PRESENT)) continue;                                             // skip emty regions
+
+        if (dst_pd[pde] == src_pd[pde]) continue;                                               // skip identical PDEs
 
         uint32_t *src_pt    = (uint32_t *)(src_pd[pde] & VMM_ADDR_MASK);                        // source PD's PT
         uint32_t  pde_flags = src_pd[pde] & ~VMM_ADDR_MASK;                                     // extract flags
@@ -113,7 +115,12 @@ pid_t proc_fork(uint32_t child_entry) {
         child->in_signal       = 0;
     }
 
-    proc_init_frame(child, child_entry);                                            // build child stack frame
+    if (parent && parent->page_directory && child_entry < 0xC0000000u) {            // build child stack frame
+        proc_init_user_frame(child, child_entry, USTACK_TOP - 8);
+    } else {
+        proc_init_frame(child, child_entry);
+    }
+
     proc_set_ready(child);                                                          // child = runnable
     sched_add(child);                                                               // add child -> scheduler queue
 

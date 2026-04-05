@@ -14,6 +14,7 @@
 #include "lwip_orion.h"
 #include "kprintf.h"
 #include "string.h"
+#include "timer.h"
 
 // global driver state
 static struct netif orion_netif;            // the single virtio-net network interface
