@@ -106,14 +106,17 @@ static int sh_tokenise(char *line, char **argv, int argv_max) {
 static void sh_print_prompt(void) {
 
     char cwd[256];
+    char uname[64];
 
     if (getcwd(cwd, sizeof(cwd)) < 0) {         // return current working directory
         strcpy(cwd, "/");
     }
 
     sh_write("\nOrion");
+    load_username(uname, sizeof(uname));        // always loaded independently of cwd
+    sh_write(":");
     sh_write(cwd);
-    sh_write("/: $ ");                            // Orion/username:/ $ 
+    sh_write(" $ ");
 }
 
 // list builtin commands with descriptions
