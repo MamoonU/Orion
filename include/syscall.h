@@ -34,8 +34,9 @@
 #define SYS_KILL        24      // EBX = pid, ECX = signum          - send signal to process
 #define SYS_DIAL        25      // EBX = addr ("ip!port"), ECX = path, EDX = ns_flags - dial TCP PULSAR server + mount
 #define SYS_SEEK        26      // EBX = fd, ECX = offset (signed), EDX = whence (SEEK_SET | SEEK_CUR | SEEK_END)
+#define SYS_MKDIR       27
  
-#define SYSCALL_COUNT   27
+#define SYSCALL_COUNT   28
 
 // kernel-side entry point (registered in IDT as int 0x80)
 void syscall_dispatch(regs_t *r);

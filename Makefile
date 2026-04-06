@@ -240,7 +240,7 @@ clean:
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
 	@rm -f $(OBJS) $(LIBORION_OBJS) $(LIBORION) $(LWIP_OBJS) \
 	       $(USER_SH_ELF) $(USER_SH_BIN_O) \
-	       $(USER_TOP_ELF) $(USER_OTOP_BIN_O) myos myos.iso
+	       $(USER_OTOP_ELF) $(USER_OTOP_BIN_O) myos myos.iso
 	@rm -rf isodir
 
 QEMU_FLAGS := -cdrom myos.iso -serial stdio -no-reboot -m 128M

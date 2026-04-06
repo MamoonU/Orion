@@ -521,6 +521,17 @@ static int32_t sys_seek(regs_t *r) {
     return fd_seek(p->fd_table, fd, offset, whence);
 }
 
+// SYS_MKDIR (27): create a directory
+static int32_t sys_mkdir(regs_t *r) {
+    const char *path = (const char *)r->ebx;
+    if (!syscall_validate_ptr(path, 1)) return -1;
+    pcb_t *p = sched_current();
+    if (!p) return -1;
+    char resolved[VFS_PATH_MAX];
+    vfs_path_resolve(p->cwd_path, path, resolved);
+    return (int32_t)vfs_mkdir(resolved);
+}
+
 typedef int32_t (*syscall_fn_t)(regs_t *);
 
 // define dispatch table
@@ -552,6 +563,7 @@ static syscall_fn_t syscall_table[SYSCALL_COUNT] = {
     [SYS_KILL]      = sys_kill,
     [SYS_DIAL]      = sys_dial,
     [SYS_SEEK]      = sys_seek,
+    [SYS_MKDIR]     = sys_mkdir,
 };
 
 void syscall_dispatch(regs_t *r) {

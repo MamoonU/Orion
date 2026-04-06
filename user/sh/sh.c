@@ -111,16 +111,9 @@ static void sh_print_prompt(void) {
         strcpy(cwd, "/");
     }
 
-    char uname[64];
-    load_username(uname, sizeof(uname));        // return username from /etc/username
-
     sh_write("\nOrion");
-    if (uname[0]) {
-        sh_write("/"); sh_write(uname);
-    }
-    sh_write(":");
     sh_write(cwd);
-    sh_write(" $ ");                            // Orion/username:/ $ 
+    sh_write("/: $ ");                            // Orion/username:/ $ 
 }
 
 // list builtin commands with descriptions
@@ -173,12 +166,25 @@ static void builtin_pwd(void) {
 // cd <path> = change directory
 static void builtin_cd(int argc, char **argv) {
 
-    const char *target = (argc >= 2) ? argv[1] : "/";   // no args = go to root "/"
+    const char *target;
+    static char home_path[128];                             // static: survives the function call
+
+    if (argc >= 2) {
+        target = argv[1];
+    } else {
+        char uname[64];
+        load_username(uname, sizeof(uname));
+        if (uname[0]) snprintf(home_path, sizeof(home_path), "/%s", uname);
+        else           strcpy(home_path, "/");
+        target = home_path;
+    }
+
     if (chdir(target) < 0) {
         sh_write("cd: no such directory: ");
         sh_write(target);
         sh_putchar('\n');
     }
+
 }
 
 // ls [path] = list directory
@@ -731,6 +737,14 @@ int main(int argc, char **argv) {
         if (uname[0]) save_username(uname);
     }
 
+    char home_uname[64];
+    load_username(home_uname, sizeof(home_uname));
+    if (home_uname[0]) {
+        char home[128];
+        snprintf(home, sizeof(home), "/%s", home_uname);
+        mkdir(home);                                            // create /(username) - ignored if already exists
+        chdir(home);                                            // enter home directory
+    }
     sh_write("\033[2J\033[H");
 
     sh_write(

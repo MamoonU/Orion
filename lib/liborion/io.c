@@ -82,6 +82,11 @@ int32_t lseek(int fd, int32_t offset, int whence) {
     return syscall(SYS_SEEK, (uint32_t)fd, (uint32_t)offset, (uint32_t)whence);
 }
 
+// create directory
+int mkdir(const char *path) {
+    return (int)syscall(SYS_MKDIR, (uint32_t)path, 0, 0);
+}
+
 // human-readable errno string
 char *strerror(int errnum) {
     switch (errnum) {
