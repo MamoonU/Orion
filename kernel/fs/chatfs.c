@@ -78,7 +78,143 @@ static chat_room_t *room_get_or_create(const char *name) {
 
 }
 
+// vnode tag ftypes
+#define CHAT_FILE_LOG  0    // read-only message history
+#define CHAT_FILE_CTL  1    // write: join/leave/msg commands
 
+// file tag structure
+typedef struct {
+    char    room_name[CHAT_NAME_MAX];
+    uint8_t ftype;
+} chatfs_file_tag_t;
+
+// directory tag structure 
+typedef struct {
+    char room_name[CHAT_NAME_MAX];
+} chatfs_dir_tag_t;
+
+// /chat/planet/log read: returns history from offset
+static int chatfs_log_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+
+    chatfs_file_tag_t *tag = (chatfs_file_tag_t *)v->data;              // get room
+    chat_room_t *r = room_find(tag->room_name);
+
+    if (!r || off >= r->log_len) return 0;                              // bounds check
+
+    uint32_t avail = r->log_len - off;                                  // calculate bytes to read
+    uint32_t n = (len < avail) ? len : avail;
+
+    memcpy(buf, r->log + off, n);                                       // copy data
+    return (int)n;                                                      // return bytes read
+
+}
+
+// /chat/planet/ctl read: returns active member list
+static int chatfs_ctl_read(vnode_t *v, void *buf, uint32_t len, uint32_t off) {
+
+    chatfs_file_tag_t *tag = (chatfs_file_tag_t *)v->data;                  // get room
+    chat_room_t *r = room_find(tag->room_name);
+    if (!r) return 0;
+
+    char out[1024];                                                         // build output string
+    uint32_t pos = 0;
+
+    for (uint32_t i = 0; i < r->nmembers && pos < sizeof(out) - 1; i++) {   // append each member
+        const char *m = r->members[i];
+        while (*m && pos < sizeof(out) - 1) {                               // for each username
+            out[pos++] = *m++;
+        }
+        out[pos++] = '\n';
+    }
+    out[pos] = '\0';
+
+    if (off >= pos) return 0;                                               // offset-aware read
+    uint32_t avail = pos - off;
+    uint32_t n = (len < avail) ? len : avail;
+    memcpy(buf, out + off, n);                                              // copy slice
+    return (int)n;
+
+}
+
+// /chat/planet/ctl write — commands:
+//   "join username"        -> add satellite, log join message
+//   "leave username"       -> remove satellite, log leave message
+//   "msg username:message" -> log formatted message
+static int chatfs_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t off) {
+
+    (void)off;
+    chatfs_file_tag_t *tag = (chatfs_file_tag_t *)v->data;
+
+    char cmd[256];
+    uint32_t clen = (len < sizeof(cmd) - 1) ? len : sizeof(cmd) - 1;
+    memcpy(cmd, buf, clen);                                                         // copy user input
+    cmd[clen] = '\0';
+    int cl = (int)strlen(cmd);
+    while (cl > 0 && (cmd[cl-1] == '\n' || cmd[cl-1] == '\r')) cmd[--cl] = '\0';    // trim new line
+
+    chat_room_t *r = room_get_or_create(tag->room_name);                            // ensure room exists
+    if (!r) return -1;
+
+    if (strncmp(cmd, "join ", 5) == 0) {                                            // CASE 1: join
+
+        const char *uname = cmd + 5;
+        int found = 0;
+
+        for (uint32_t i = 0; i < r->nmembers; i++) {                                // check duplicate
+            if (strcmp(r->members[i], uname) == 0) { found = 1; break; }
+        }
+
+        if (!found && r->nmembers < CHAT_MAX_MEMBERS) {                             // add user
+            strncpy(r->members[r->nmembers++], uname, 63);
+        }
+
+        log_msg(r, "Satellite ", uname, " deployed to ", r->name);                  // append join msg
+        log_append(r, "'s orbit\n");
+        kprintf("CHATFS: satellite \"%s\" joined \"%s\"\n", uname, r->name);
+
+    } else if (strncmp(cmd, "leave ", 6) == 0) {                                    // CASE 2: leave
+
+        const char *uname = cmd + 6;
+
+        for (uint32_t i = 0; i < r->nmembers; i++) {                                // remove logic
+            if (strcmp(r->members[i], uname) == 0) {
+                for (uint32_t j = i; j + 1 < r->nmembers; j++) {
+                    memcpy(r->members[j], r->members[j+1], 64);
+                }
+                r->nmembers--;
+                break;
+            }
+        }
+
+        log_msg(r, "Satellite ", uname, " recalled to Base-Station: Orbit terminated", 0);  // log message
+        kprintf("CHATFS: satellite \"%s\" left \"%s\"\n", uname, r->name);
+
+    } else if (strncmp(cmd, "msg ", 4) == 0) {                                      // CASE 3: message
+
+        const char *rest = cmd + 4;
+        const char *p = rest;
+        while (*p && *p != ':') p++;                                                // find separator
+
+        if (*p == ':') {
+            char uname[64];
+            uint32_t ulen = (uint32_t)(p - rest);
+            if (ulen >= sizeof(uname)) ulen = sizeof(uname) - 1;
+            memcpy(uname, rest, ulen);                                              // extract username
+            uname[ulen] = '\0';
+            log_msg(r, uname, ": ", p + 1, 0);                                      // "username: message"
+        }
+
+    } else {
+
+        kprintf("CHATFS: unknown ctl command: %s\n", cmd);
+
+    }
+    return (int)len;
+}
+
+// /chat log and ctl operations
+static vfs_ops_t chatfs_log_ops = { .read = chatfs_log_read };
+static vfs_ops_t chatfs_ctl_ops = { .read = chatfs_ctl_read, .write = chatfs_ctl_write };
 
 
 
