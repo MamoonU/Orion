@@ -4,6 +4,8 @@
 
 #include "chatfs.h"
 #include "vfs.h"
+#include "kheap.h"
+#include "ramfs.h"
 #include "kprintf.h"
 #include "string.h"
 
@@ -216,8 +218,121 @@ static int chatfs_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t 
 static vfs_ops_t chatfs_log_ops = { .read = chatfs_log_read };
 static vfs_ops_t chatfs_ctl_ops = { .read = chatfs_ctl_read, .write = chatfs_ctl_write };
 
+// room directory lookup: maps log and ctl
+static int chatdir_lookup(vnode_t *dir, const char *name, vnode_t **out) {
 
+    chatfs_dir_tag_t *dt = (chatfs_dir_tag_t *)dir->data;
 
+    vfs_ops_t *ops;
+    uint8_t    ftype;
+
+    if      (strcmp(name, "log") == 0) { ftype = CHAT_FILE_LOG; ops = &chatfs_log_ops; }            // identify file type
+    else if (strcmp(name, "ctl") == 0) { ftype = CHAT_FILE_CTL; ops = &chatfs_ctl_ops; }
+    else return -1;
+
+    room_get_or_create(dt->room_name);                                                              // ensure room exists on first access
+
+    chatfs_file_tag_t *tag = (chatfs_file_tag_t *)kmalloc(sizeof(chatfs_file_tag_t));               // create tag
+    if (!tag) return -1;
+    strncpy(tag->room_name, dt->room_name, CHAT_NAME_MAX - 1);
+    tag->ftype = ftype;
+
+    vnode_t *fv = vnode_alloc(VNODE_DEV, ops, tag);                                                 // create vnode
+    if (!fv) { kfree(tag); return -1; }
+    *out = fv;
+    return 0;
+
+}
+
+// chat directory files
+static const char *chatdir_files[] = { "log", "ctl" };
+#define CHATDIR_FILE_COUNT 2
+
+// read directories: list log and ctl
+static int chatdir_readdir(vnode_t *dir, uint32_t index, char *name_out, vnode_t **node_out) {
+
+    if (index >= CHATDIR_FILE_COUNT) return -1;
+    if (name_out) strncpy(name_out, chatdir_files[index], VFS_NAME_MAX - 1);
+    if (node_out) chatdir_lookup(dir, chatdir_files[index], node_out);
+    return 0;
+
+}
+
+// chat directory operations
+static vfs_ops_t chatdir_ops = { .lookup = chatdir_lookup, .readdir = chatdir_readdir };
+
+// make room directory: create vnode for room directory
+static vnode_t *make_room_dir(const char *room_name) {
+
+    chatfs_dir_tag_t *tag = (chatfs_dir_tag_t *)kmalloc(sizeof(chatfs_dir_tag_t));      // allocate tag
+    if (!tag) return 0;
+
+    strncpy(tag->room_name, room_name, CHAT_NAME_MAX - 1);                              // store room name
+
+    vnode_t *v = vnode_alloc(VNODE_DIR, &chatdir_ops, tag);                             // create vnode
+    if (!v) { kfree(tag); return 0; }
+    return v;
+
+}
+
+// /chat root lookup: any name creates/finds a planet
+static int chatroot_lookup(vnode_t *dir, const char *name, vnode_t **out) {
+
+    (void)dir;
+    vnode_t *v = make_room_dir(name);
+    if (!v) return -1;
+    *out = v;
+    return 0;
+
+}
+
+// /chat root readdir: lists all active planets
+static int chatroot_readdir(vnode_t *dir, uint32_t index, char *name_out, vnode_t **node_out) {
+
+    (void)dir;
+    uint32_t found = 0;
+
+    for (int i = 0; i < CHAT_MAX_ROOMS; i++) {
+        if (!rooms[i].active) continue;                                         // skip inactive
+        if (found == index) {                                                   // return nth active
+            if (name_out) strncpy(name_out, rooms[i].name, VFS_NAME_MAX - 1);
+            if (node_out) *node_out = make_room_dir(rooms[i].name);
+            return 0;
+        }
+        found++;
+    }
+    return -1;
+
+}
+
+// chat root operations
+static vfs_ops_t chatroot_ops = { .lookup = chatroot_lookup, .readdir = chatroot_readdir };
+
+// initialise chat filesystem
+void chatfs_init(void) {
+
+    kprintf("CHATFS: Initialising\n");
+    memset(rooms, 0, sizeof(rooms));                                        // clear state
+
+    vnode_t *root = vnode_alloc(VNODE_DIR, &chatroot_ops, 0);               // create root vnode
+    if (!root) {
+        kprintf("CHATFS: FATAL - could not allocate root vnode\n");
+        return;
+    }
+
+    if (vfs_mkdir("/chat") < 0) {                                           // create /chat
+        kprintf("CHATFS: FATAL - could not create /chat\n");
+        return;
+    }
+
+    if (ramfs_register_dev("/chat", root) < 0) {                            // mount /chat
+        kprintf("CHATFS: FATAL - could not register /chat\n");
+        return;
+    }
+
+    kprintf("CHATFS: /chat ready (%d planets max, %d satellites each)\n", CHAT_MAX_ROOMS, CHAT_MAX_MEMBERS);
+
+}
 
 
 

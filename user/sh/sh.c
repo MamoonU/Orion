@@ -86,20 +86,22 @@ static int sh_tokenise(char *line, char **argv, int argv_max) {
     while (*line) {
 
         while (*line == ' ' || *line == '\t') line++;       // skip whitespace
-        if (!*line) break;                                  // stop if end of line
+        if (!*line) break;
+        if (argc >= argv_max - 1) break;
 
-        if (argc >= argv_max - 1) break;                    // leave room for NULL (prevent overflow)
-
-        argv[argc++] = line;                                // start of token
-
-        while (*line && *line != ' ' && *line != '\t') {    // scan token
-            line++;
+        if (*line == '"') {                                 // quoted token: strip quotes, allow spaces inside
+            line++;                                         // skip opening quote
+            argv[argc++] = line;
+            while (*line && *line != '"') line++;           // scan to closing quote
+            if (*line) *line++ = '\0';                      // terminate and skip closing quote
+        } else {
+            argv[argc++] = line;                            // normal token
+            while (*line && *line != ' ' && *line != '\t') line++;
+            if (*line) *line++ = '\0';
         }
-
-        if (*line) *line++ = '\0';                          // terminate token
     }
-    argv[argc] = 0;                                         // null terminate argv (output array)
-    return argc;                                            // return arg count
+    argv[argc] = 0;
+    return argc;
 }
 
 // prompt ( orion: $ )
@@ -146,12 +148,18 @@ static void builtin_help(void) {
 // echo [args...] = print arguments
 static void builtin_echo(int argc, char **argv) {
 
-    for (int i = 1; i < argc; i++) {                    // skip argv[0] (command name)
-        if (i > 1) sh_putchar(' ');                     // insert space between args
-        sh_write(argv[i]);                              // write args
-    }
+    char buf[SH_LINE_MAX];
+    uint32_t pos = 0;
 
-    sh_putchar('\n');
+    for (int i = 1; i < argc; i++) {                        // join all args into one buffer
+        if (i > 1 && pos < sizeof(buf) - 1) buf[pos++] = ' ';
+        const char *s = argv[i];
+        while (*s && pos < sizeof(buf) - 1) buf[pos++] = *s++;
+    }
+    buf[pos++] = '\n';
+    buf[pos]   = '\0';
+
+    write(STDOUT_FILENO, buf, pos);                         // single write: critical for ctl files
 }
 
 // pwd = print working directory
@@ -485,7 +493,7 @@ static void builtin_unbind(int argc, char **argv) {
 
 // dial a remote PULSAR server over TCP and bind it into the namespace
 static void builtin_mount(int argc, char **argv) {
- 
+
     if (argc < 3) {
         sh_write("usage: mount [-b|-a] <ip!port> <path>\n");
         sh_write("       -b  bind before (union prepend)\n");
@@ -494,11 +502,11 @@ static void builtin_mount(int argc, char **argv) {
         sh_write("example: mount 192.168.1.2!564 /remote\n");
         return;
     }
- 
+
     uint8_t     flags    = NS_BIND_REPLACE;
     const char *addr_arg = argv[1];
     const char *path_arg = argv[2];
- 
+
     if (argv[1][0] == '-') {                                                // flag parsing
         if      (argv[1][1] == 'b') flags = NS_BIND_BEFORE;
         else if (argv[1][1] == 'a') flags = NS_BIND_AFTER;
@@ -510,11 +518,12 @@ static void builtin_mount(int argc, char **argv) {
         addr_arg = argv[2];
         path_arg = argv[3];
     }
- 
+
     sh_write("mount: dialling ");
     sh_write(addr_arg);
     sh_write(" ...\n");
- 
+
+    mkdir(path_arg);
     int rc = dial(addr_arg, path_arg, flags);
     if (rc < 0) {
         switch (rc) {
@@ -700,10 +709,12 @@ static void wizard_client(void) {
         sh_write(mpath);
         sh_write(" ...\n");
 
+        mkdir(mpath);
         int rc = dial(addr, mpath, NS_BIND_REPLACE);
         if (rc < 0) sh_write("  mount failed.\n");
         else        sh_write("  mounted ok.\n");
     }
+    bind("/remote/chat", "/chat", NS_BIND_REPLACE);
 }
 
 // entry point

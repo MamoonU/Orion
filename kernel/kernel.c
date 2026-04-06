@@ -3,32 +3,39 @@
 #include <stdbool.h>
 
 #include "multiboot.h"
+#include "panic.h"
+#include "serial.h"
+
 #include "gdt.h"
 #include "idt.h"
 #include "tss.h"
 #include "irq.h"
-#include "panic.h"
-#include "serial.h"
+#include "timer.h"
+#include "keyboard.h"
+
 #include "vga.h"
 #include "kprintf.h"
+#include "string.h"
+
 #include "pmm.h"
 #include "vmm.h"
 #include "kheap.h"
+
 #include "vfs.h"
 #include "ramfs.h"
 #include "devfs.h"
+#include "procfs.h"
+#include "netfs.h"
+#include "chatfs.h"
+
 #include "proc.h"
-#include "timer.h"
-#include "keyboard.h"
 #include "sched.h"
 #include "syscall.h"
+#include "elf.h"
+
 #include "pci.h"
 #include "virtio_net.h"
 #include "lwip_orion.h"
-#include "netfs.h"
-#include "procfs.h"
-#include "elf.h"
-#include "string.h"
 
 #if defined(__linux__)
     #error "Must be compiled with a cross-compiler"
@@ -125,6 +132,7 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
 
     netfs_init();
     procfs_init();
+    chatfs_init();
 
     pcb_t *idle = proc_create("idle", PROC_PRIO_IDLE);
     kassert(idle != 0);
