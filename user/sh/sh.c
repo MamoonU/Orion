@@ -24,6 +24,27 @@ static char sh_readchar(void) {
     return c;
 }
 
+// save username -> /etc/username
+static void save_username(const char *uname) {
+    int fd = open("/etc/username", O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) return;
+    write(fd, uname, (uint32_t)strlen(uname));
+    close(fd);
+}
+
+// load username from /etc/username into buf
+static void load_username(char *buf, uint32_t bufsz) {
+    buf[0] = '\0';
+    int fd = open("/etc/username", O_RDONLY);
+    if (fd < 0) return;
+    int n = read(fd, buf, bufsz - 1);
+    close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r' || buf[n-1] == ' '))
+        buf[--n] = '\0';
+}
+
 // line editor: read until newline, echoes characters, handle backspaces
 static uint32_t sh_readline(char *buf, uint32_t max) {
 
@@ -90,9 +111,16 @@ static void sh_print_prompt(void) {
         strcpy(cwd, "/");
     }
 
-    sh_write("\norion:");
+    char uname[64];
+    load_username(uname, sizeof(uname));        // return username from /etc/username
+
+    sh_write("\nOrion");
+    if (uname[0]) {
+        sh_write("/"); sh_write(uname);
+    }
+    sh_write(":");
     sh_write(cwd);
-    sh_write(" $ ");                            // orion:/net/tcp $
+    sh_write(" $ ");                            // Orion/username:/ $ 
 }
 
 // list builtin commands with descriptions
@@ -591,6 +619,11 @@ static void sh_dispatch(int argc, char **argv) {
 
 static void wizard_host(void) {
 
+    sh_write("\n  Enter a Host Username: ");
+    char uname[64];
+    sh_readline(uname, sizeof(uname));
+    if (uname[0]) save_username(uname);
+
     sh_write("\n  -- Host Setup --\n");
     sh_write("  Enter IP address   (e.g. 10.0.0.1): ");
     char ip[64];
@@ -616,6 +649,11 @@ static void wizard_host(void) {
 }
 
 static void wizard_client(void) {
+
+    sh_write("\n  Enter a Client Username: ");
+    char uname[64];
+    sh_readline(uname, sizeof(uname));
+    if (uname[0]) save_username(uname);
 
     sh_write("\n  -- Client Setup --\n");
     sh_write("  Enter your IP address  (e.g. 10.0.0.2): ");
@@ -669,7 +707,7 @@ int main(int argc, char **argv) {
     signal(SIGCHLD, SIG_IGN);                                   // shell ignores SIGCHLD: child exit does not kill the shell
 
     // ── CONFIGURATION WIZARD ──────────────────────────────────
-    sh_write("OrionOS Network Setup\n");
+    sh_write("                                OrionOS Setup\n");
     sh_write("\n");
     sh_write("----------------------------------------\n");
     sh_write("|  [h] Host   - serve your filesystem  |\n");
@@ -686,6 +724,11 @@ int main(int argc, char **argv) {
         wizard_host();
     } else if (wizard_choice[0] == 'c' || wizard_choice[0] == 'C') {
         wizard_client();
+    } else {
+        sh_write("  Enter a Username: ");
+        char uname[64];
+        sh_readline(uname, sizeof(uname));
+        if (uname[0]) save_username(uname);
     }
 
     sh_write("\033[2J\033[H");

@@ -132,7 +132,6 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     proc_set_ready(idle);
     sched_add(idle);
 
-
     pcb_t *srv = proc_create("pulsar-srv", PROC_PRIO_NORMAL);
     kassert(srv != 0);
     proc_init_frame(srv, (uint32_t)pulsar_server_process);
@@ -145,10 +144,13 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     uint32_t sh_elf_size = (uint32_t)(_binary_user_sh_sh_elf_end - _binary_user_sh_sh_elf_start);
 
     vfs_mkdir("/bin");
+
     file_t *sh_file = vfs_open("/bin/sh", O_CREAT | O_WRONLY);
     kassert(sh_file != 0);
     vfs_write(sh_file, _binary_user_sh_sh_elf_start, sh_elf_size);
     vfs_close(sh_file);
+
+    vfs_mkdir("/etc");                                                      // config directory
 
     // embed top ELF into ramfs at /bin/top
     extern uint8_t _binary_user_otop_otop_elf_start[];
