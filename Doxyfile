@@ -1,0 +1,22 @@
+# Doxyfile configuration for generating HTML and PDF documentation
+
+# Project Name
+PROJECT_NAME           = "Orion"
+
+# Output directory
+OUTPUT_DIRECTORY       = doc
+
+# Input directories
+INPUT                  = kernel lib user
+
+# Generate HTML output
+GENERATE_HTML          = YES
+
+# Generate LaTeX output (for PDF)
+GENERATE_LATEX         = YES
+LATEX_OUTPUT           = latex
+
+# Other settings
+RECURSIVE              = YES
+EXTRACT_ALL            = YES
+QUIET                  = NO
