@@ -1,0 +1,17 @@
+# Doxyfile 
+
+# This is a Doxygen configuration file for generating documentation
+
+# Output directory for the generated docs
+OUTPUT_DIRECTORY = docs
+
+# Generate HTML documentation
+GENERATE_HTML = YES
+
+# Generate LaTeX documentation (for PDF output)
+GENERATE_LATEX = YES
+
+# Specify the location of the generated PDF output
+LATEX_OUTPUT = docs/pdf
+
+# Other configurations can follow here...
