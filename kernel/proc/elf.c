@@ -52,7 +52,15 @@ static int elf_load_segment(file_t *f, const Elf32_Phdr *ph, uint32_t pd_phys) {
             return -1;
         }
 
-        memset((void *)frame, 0, PAGE_SIZE);                                             // zero mapped page: BSS and alignment padding are clean
+        int frame_was_mapped = vmm_is_mapped(frame);
+        if (!frame_was_mapped)
+            vmm_map_page(frame, frame, VMM_KERNEL_RW);                                  // map before zeroing: frame is physical
+
+        memset((void *)frame, 0, PAGE_SIZE);                                            // zero mapped page: BSS and alignment padding are clean
+
+        if (!frame_was_mapped)
+            vmm_unmap_page(frame);                                                      // done zeroing, remove temp mapping
+
         vmm_map_page_in(pd_phys, page, frame, page_flags);                              // map virtual -> physical
     }
 
@@ -70,12 +78,25 @@ static int elf_load_segment(file_t *f, const Elf32_Phdr *ph, uint32_t pd_phys) {
             return -1;
         }
 
-        uint32_t *pd    = (uint32_t *)pd_phys;
         uint32_t  written = 0;
+
+        int pd_was_mapped = vmm_is_mapped(pd_phys);
+        if (!pd_was_mapped) {
+            vmm_map_page(pd_phys, pd_phys, VMM_KERNEL_RW);          // map PD before walking it
+        }
+
+        uint32_t *pd    = (uint32_t *)pd_phys;
 
         while (written < filesz) {                                                      // copy into map pages
 
             uint32_t  cur_virt = vaddr + written;                                       // compute virt addr
+            uint32_t pt_phys   = pd[cur_virt >> 22] & VMM_ADDR_MASK;                    // PT physical address
+
+            int pt_was_mapped = vmm_is_mapped(pt_phys);
+            if (!pt_was_mapped) {
+                vmm_map_page(pt_phys, pt_phys, VMM_KERNEL_RW);                          // map PT before reading it
+            }
+
             uint32_t *pt       = (uint32_t *)(pd[cur_virt >> 22] & VMM_ADDR_MASK);      // find PT
             uint32_t  frame    = pt[(cur_virt >> 12) & 0x3FFu] & VMM_ADDR_MASK;         // find phys frame
             uint32_t  pg_off   = cur_virt & 0xFFFu;                                     // offset
@@ -85,9 +106,20 @@ static int elf_load_segment(file_t *f, const Elf32_Phdr *ph, uint32_t pd_phys) {
                 chunk = filesz - written;
             }
 
+            int dest_was_mapped = vmm_is_mapped(frame);
+            if (!dest_was_mapped) {
+                vmm_map_page(frame, frame, VMM_KERNEL_RW);                              // map destination frame before writing ELF bytes
+            }
+
             memcpy((void *)(frame + pg_off), bounce + written, chunk);                  // copy ELF bytes -> RAM
+
+            if (!dest_was_mapped) vmm_unmap_page(frame);                                // done writing this chunk
+            if (!pt_was_mapped)   vmm_unmap_page(pt_phys);                              // done reading this PT
+
             written += chunk;
         }
+        if (!pd_was_mapped)
+        vmm_unmap_page(pd_phys);                                                        // done walking PD
     }
     kprintf("ELF:   PT_LOAD  0x%p  filesz=%u  memsz=%u  flags=%p\n", vaddr, filesz, memsz, page_flags);
     return 0;

@@ -160,7 +160,7 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
 
     vfs_mkdir("/etc");                                                      // config directory
 
-    // embed top ELF into ramfs at /bin/top
+    // embed otop ELF into ramfs at /bin/top
     extern uint8_t _binary_user_otop_otop_elf_start[];
     extern uint8_t _binary_user_otop_otop_elf_end[];
     uint32_t otop_elf_size = (uint32_t)(_binary_user_otop_otop_elf_end - _binary_user_otop_otop_elf_start);
@@ -169,6 +169,19 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *mbi) {
     kassert(otop_file != 0);
     vfs_write(otop_file, _binary_user_otop_otop_elf_start, otop_elf_size);
     vfs_close(otop_file);
+
+    // embed orbit ELF into ramfs at /bin/orbit
+    extern uint8_t _binary_user_orbit_orbit_elf_start[];
+    extern uint8_t _binary_user_orbit_orbit_elf_end[];
+    uint32_t orbit_elf_size = (uint32_t)(_binary_user_orbit_orbit_elf_end - _binary_user_orbit_orbit_elf_start);
+
+    file_t *orbit_file = vfs_open("/bin/orbit", O_CREAT | O_WRONLY);
+    kassert(orbit_file != 0);
+    vfs_write(orbit_file, _binary_user_orbit_orbit_elf_start, orbit_elf_size);
+    vfs_close(orbit_file);
+
+    file_t *hn_file = vfs_open("/etc/hostname", O_CREAT | O_WRONLY);
+    if (hn_file) { vfs_write(hn_file, "orion", 5); vfs_close(hn_file); }
 
     // launch shell as ring-3 process
     pcb_t *sh = proc_create("orion-sh", PROC_PRIO_NORMAL);

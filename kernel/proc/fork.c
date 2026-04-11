@@ -14,49 +14,82 @@ static int copy_address_space(uint32_t dst_pd_phys, uint32_t src_pd_phys) {
 
     if (!dst_pd_phys || !src_pd_phys) return -1;
 
-    uint32_t *src_pd = (uint32_t *)src_pd_phys;                                                 // source PD
-    uint32_t *dst_pd = (uint32_t *)dst_pd_phys;                                                 // destination PD
+    uint32_t *src_pd   = (uint32_t *)src_pd_phys;
+    uint32_t *dst_pd   = (uint32_t *)dst_pd_phys;
+    uint32_t  kpd_phys = vmm_get_kernel_pd();
+    uint32_t *kpd      = (uint32_t *)kpd_phys;     // always < 4 MB, direct access safe
 
-    for (int pde = 0; pde < 1024; pde++) {                                                      // walk user space PDEs
+    for (int pde = 0; pde < 1024; pde++) {
 
-        if (!(src_pd[pde] & VMM_PRESENT)) continue;                                             // skip emty regions
+        if (!(src_pd[pde] & VMM_PRESENT)) continue;
 
-        if (dst_pd[pde] == src_pd[pde]) continue;                                               // skip identical PDEs
+        // Kernel PDE: share the PT reference directly, never clone
+        if (src_pd[pde] == kpd[pde]) {
+            dst_pd[pde] = src_pd[pde];
+            continue;
+        }
 
-        uint32_t *src_pt    = (uint32_t *)(src_pd[pde] & VMM_ADDR_MASK);                        // source PD's PT
-        uint32_t  pde_flags = src_pd[pde] & ~VMM_ADDR_MASK;                                     // extract flags
+        // User PDE: deep copy
+        uint32_t src_pt_phys = src_pd[pde] & VMM_ADDR_MASK;
+        uint32_t pde_flags   = src_pd[pde] & ~VMM_ADDR_MASK;
 
-        uint32_t dst_pt_phys = pmm_alloc_frame();                                               // alloc new PT for destination PD
+        int src_pt_was_mapped = vmm_is_mapped(src_pt_phys);
+        if (!src_pt_was_mapped)
+            vmm_map_page(src_pt_phys, src_pt_phys, VMM_KERNEL_RW);
+
+        uint32_t *src_pt = (uint32_t *)src_pt_phys;
+
+        uint32_t dst_pt_phys = pmm_alloc_frame();
         if (!dst_pt_phys) {
+            if (!src_pt_was_mapped) vmm_unmap_page(src_pt_phys);
             kprintf("PROC: copy_address_space - OOM allocating PT (pde=%d)\n", pde);
             return -1;
         }
 
+        int dst_pt_was_mapped = vmm_is_mapped(dst_pt_phys);
+        if (!dst_pt_was_mapped)
+            vmm_map_page(dst_pt_phys, dst_pt_phys, VMM_KERNEL_RW);
+
         uint32_t *dst_pt = (uint32_t *)dst_pt_phys;
 
-        for (int pte = 0; pte < 1024; pte++) {                                                  // walk every page within table
+        for (int pte = 0; pte < 1024; pte++) {
 
-            // case A: page not present
-            if (!(src_pt[pte] & VMM_PRESENT)) {
-                dst_pt[pte] = 0; continue;
-            }
+            if (!(src_pt[pte] & VMM_PRESENT)) { dst_pt[pte] = 0; continue; }
 
-            // case B: page is present
-            uint32_t src_frame = src_pt[pte] & VMM_ADDR_MASK;                                   // return source frame
+            uint32_t src_frame = src_pt[pte] & VMM_ADDR_MASK;
             uint32_t pte_flags = src_pt[pte] & ~VMM_ADDR_MASK;
 
-            uint32_t dst_frame = pmm_alloc_frame();                                             // alloc new frame for destination 
+            uint32_t dst_frame = pmm_alloc_frame();
             if (!dst_frame) {
-                kprintf("PROC: copy_address_space - OOM copying frame (pde=%d pte=%d)\n", pde, pte);
+                if (!src_pt_was_mapped) vmm_unmap_page(src_pt_phys);
+                if (!dst_pt_was_mapped) vmm_unmap_page(dst_pt_phys);
                 pmm_free_frame(dst_pt_phys);
+                kprintf("PROC: copy_address_space - OOM copying frame (pde=%d pte=%d)\n", pde, pte);
                 return -1;
             }
 
-            memcpy((void *)dst_frame, (const void *)src_frame, PAGE_SIZE);                      // copy memory
-            dst_pt[pte] = dst_frame | pte_flags;                                                // copy flags + install mapping
+            int src_frame_was_mapped = vmm_is_mapped(src_frame);
+            if (!src_frame_was_mapped)
+                vmm_map_page(src_frame, src_frame, VMM_KERNEL_RW);
+
+            int dst_frame_was_mapped = vmm_is_mapped(dst_frame);
+            if (!dst_frame_was_mapped)
+                vmm_map_page(dst_frame, dst_frame, VMM_KERNEL_RW);
+
+            memcpy((void *)dst_frame, (const void *)src_frame, PAGE_SIZE);
+
+            if (!src_frame_was_mapped) vmm_unmap_page(src_frame);
+            if (!dst_frame_was_mapped) vmm_unmap_page(dst_frame);
+
+            dst_pt[pte] = dst_frame | pte_flags;
         }
-        dst_pd[pde] = dst_pt_phys | pde_flags;                                                  // install new PT -> destination PD
+
+        if (!src_pt_was_mapped) vmm_unmap_page(src_pt_phys);
+        if (!dst_pt_was_mapped) vmm_unmap_page(dst_pt_phys);
+
+        dst_pd[pde] = dst_pt_phys | pde_flags;
     }
+
     return 0;
 }
 

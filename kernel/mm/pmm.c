@@ -255,6 +255,3 @@ void pmm_free_contiguous(uint32_t phys_addr, uint32_t n) {
         pmm_free_frame(phys_addr + i * PAGE_SIZE);
     }
 }
-
-
-

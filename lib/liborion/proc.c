@@ -33,7 +33,3 @@ int fork(uint32_t child_entry) {
     return (int)syscall(SYS_FORK, child_entry, 0, 0);
 }
 
-// replace current image with ELF at path
-int execve(const char *path) {
-    return (int)syscall(SYS_EXECVE, (uint32_t)path, 0, 0);
-}

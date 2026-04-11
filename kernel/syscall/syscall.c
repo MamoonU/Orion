@@ -68,7 +68,9 @@ static int32_t sys_exec(regs_t *r) {
     uint32_t entry = r->ecx;
     pcb_t   *p     = proc_get(pid);
     if (!p || !entry) return -1;
-    return proc_exec(p, entry);
+
+    uint32_t current_pd = (uint32_t)p->page_directory; // reuse existing PD
+    return proc_exec(p, current_pd, entry); // ✅ now matches new signature
 }
 
 // SYS_WRITE (6): write len bytes from buf -> fd
@@ -183,86 +185,103 @@ static int32_t sys_dup2(regs_t *r) {                            // closes newfd 
 
 // SYS_EXECVE (12): replace the calling process's image with ELF binary
 static int32_t sys_execve(regs_t *r) {
-    const char *path = (const char *)r->ebx;
+    const char  *path      = (const char *)r->ebx;
+    char       **user_argv = (char **)r->ecx;
 
     if (!syscall_validate_ptr(path, 1)) return -1;
 
     pcb_t *p = sched_current();
     if (!p) return -1;
- 
+
     kprintf("EXECVE: [%u] \"%s\" loading \"%s\"\n", (uint32_t)p->pid, p->name, path);
 
-    char name_copy[64];
-    strncpy(name_copy, path, sizeof(name_copy) - 1);
-    name_copy[sizeof(name_copy) - 1] = '\0';
- 
-    // 1. replace address space
-    if (p->page_directory) {
-        vmm_destroy_address_space((uint32_t)p->page_directory);
-        p->page_directory = 0;
+    // copy path and argv to kernel stack BEFORE destroying address space
+    char kpath[256];
+    strncpy(kpath, path, sizeof(kpath) - 1);
+    kpath[sizeof(kpath) - 1] = '\0';
+
+    #define KARGV_MAX 16
+    #define KARG_LEN  128
+    char kargs[KARGV_MAX][KARG_LEN];
+    int  kargc = 0;
+
+    if (user_argv && syscall_validate_ptr(user_argv, sizeof(char *))) {
+        while (kargc < KARGV_MAX) {
+            char *uarg = user_argv[kargc];
+            if (!uarg || !syscall_validate_ptr(uarg, 1)) break;
+            strncpy(kargs[kargc], uarg, KARG_LEN - 1);
+            kargs[kargc][KARG_LEN - 1] = '\0';
+            kargc++;
+        }
     }
+
+    // 1. create a new page directory for the process
     uint32_t new_pd = vmm_create_address_space();
-    if (!new_pd) { kprintf("EXECVE: OOM creating address space\n"); return -1; }
-    p->page_directory = (uint32_t *)new_pd;
- 
-    // 2. load ELF into new PD (elf_load uses sched_current()->page_directory)
-    uint32_t entry = elf_load(path);
+    if (!new_pd) {
+        kprintf("EXECVE: OOM creating address space\n");
+        return -1;
+    }
+
+    // 2. load ELF into the new PD
+    uint32_t entry = elf_load_into(kpath, new_pd);
     if (!entry) {
-        kprintf("EXECVE: failed to load \"%s\"\n", path);
+        kprintf("EXECVE: failed to load \"%s\"\n", kpath);
         vmm_destroy_address_space(new_pd);
-        p->page_directory = 0;
         return -1;
     }
 
-    // 3. map user stack
-    if (proc_setup_user_stack(p) != 0) {
-        kprintf("EXECVE: failed to set up user stack\n");
-        vmm_destroy_address_space(new_pd);
-        p->page_directory = 0;
+    // 3. call proc_exec() with preloaded PD and entry
+    if (proc_exec(p, new_pd, entry) != 0) {
+        // failed to set up stack inside proc_exec
         return -1;
     }
 
-    // 4. patch saved iret frame for ring-3 return
-    r->eip      = entry;
-    r->cs       = 0x1Bu;            // GDT[3] user code  RPL=3
-    r->eflags   = 0x00000202u;      // IF=1, reserved
+    // patch iret frame
+    r->eip    = entry;
+    r->cs     = 0x1Bu;
+    r->eflags = 0x00000202u;
 
-    // 5. activate new PD
+    // activate new PD — user stack pages now accessible via CR3
     vmm_switch(new_pd);
 
-    for (int i = 0; i < NSIG; i++) p->signal_handlers[i] = 0;   // reset signal handlers to SIG_DFL: old VAs are invalid in the new image
+    // write argv strings from high to low
+    uint32_t usp = USTACK_TOP;
+    uint32_t uarg_ptrs[KARGV_MAX + 1];
+    for (int i = kargc - 1; i >= 0; i--) {
+        uint32_t slen = (uint32_t)strlen(kargs[i]) + 1;
+        usp -= slen;
+        usp &= ~3u;
+        memcpy((void *)usp, kargs[i], slen);
+        uarg_ptrs[i] = usp;
+    }
+    uarg_ptrs[kargc] = 0;
+
+    // write argv pointer array
+    usp -= (uint32_t)(sizeof(uint32_t) * ((uint32_t)kargc + 1));
+    usp &= ~3u;
+    uint32_t argv_va = usp;
+    memcpy((void *)usp, uarg_ptrs, sizeof(uint32_t) * ((uint32_t)kargc + 1));
+
+    // write argc and argv pointer as first two stack words
+    usp -= 8;
+    uint32_t *frame = (uint32_t *)usp;
+    frame[0] = (uint32_t)kargc;
+    frame[1] = argv_va;
+
+    r->useresp = usp;
+    proc_init_user_frame(p, entry, usp);
+    r->ss      = 0x23u;
+    r->ds = r->es = r->fs = r->gs = 0x23u;
+    r->eax = r->ebx = r->ecx = r->edx = r->esi = r->edi = r->ebp = 0;
+
+    for (int i = 0; i < NSIG; i++) p->signal_handlers[i] = 0;
     p->signal_trampoline = 0;
-    p->in_signal         = 0;
-    p->pending_signals   = 0;
-    p->signal_mask       = 0;
+    p->in_signal = p->pending_signals = p->signal_mask = 0;
+    p->heap_top = UHEAP_START;
+    p->timeslice = p->timeslice_len;
+    p->ticks_total = p->ticks_scheduled = 0;
 
-    uint32_t *usp = (uint32_t *)(USTACK_TOP - 8);
-    
-    usp[0] = 0;                     // argc = 0
-    usp[1] = 0;                     // argv = NULL
-    r->useresp  = USTACK_TOP - 8;   // ring-3 stack pointer
-    r->ss       = 0x23u;            // GDT[4] user data  RPL=3
-
-    r->ds = 0x23u;
-    r->es = 0x23u;
-    r->fs = 0x23u;
-    r->gs = 0x23u;
-
-    r->eax       = 0;
-    r->ebx       = 0;
-    r->ecx       = 0;
-    r->edx       = 0;
-
-    r->esi       = 0;
-    r->edi       = 0;
-    r->ebp       = 0;
-
-    // Reset scheduler accounting so the new image gets a full timeslice
-    p->timeslice       = p->timeslice_len;
-    p->ticks_total     = 0;
-    p->ticks_scheduled = 0;
-
-    kprintf("EXECVE: [%u] \"%s\" -> ring-3 entry=0x%p  stack=0x%p\n", (uint32_t)p->pid, name_copy, entry, USTACK_TOP);
+    kprintf("EXECVE: [%u] \"%s\" -> ring-3 entry=0x%p  stack=0x%p  argc=%d\n", (uint32_t)p->pid, kpath, entry, usp, kargc);
     return 0;
 }
 
@@ -442,7 +461,18 @@ static int32_t sys_sbrk(regs_t *r) {
             }
             return -1;
         }
-        memset((void *)frame, 0, PAGE_SIZE);
+
+        int frame_was_mapped = vmm_is_mapped(frame);                // new frame may already be in identity region - check before mapping
+        if (!frame_was_mapped) {
+            vmm_map_page(frame, frame, VMM_KERNEL_RW);
+        }
+
+        memset((void *)frame, 0, PAGE_SIZE);                        // zero the new page through the kernel before mapping into user space
+
+        if (!frame_was_mapped) {
+            vmm_unmap_page(frame);
+        }
+
         vmm_map_page_in(pd_phys, addr, frame, flags);
     }
 

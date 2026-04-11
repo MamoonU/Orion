@@ -87,6 +87,10 @@ int mkdir(const char *path) {
     return (int)syscall(SYS_MKDIR, (uint32_t)path, 0, 0);
 }
 
+int execve(const char *path, char **argv) {
+    return (int)syscall(SYS_EXECVE, (uint32_t)path, (uint32_t)argv, 0);
+}
+
 // human-readable errno string
 char *strerror(int errnum) {
     switch (errnum) {

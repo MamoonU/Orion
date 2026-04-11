@@ -360,7 +360,17 @@ int proc_setup_user_stack(pcb_t *p) {
             return -1;
         }
 
+        int frame_was_mapped = vmm_is_mapped(frame);
+        if (!frame_was_mapped) {
+            vmm_map_page(frame, frame, VMM_KERNEL_RW);
+        }
+
         memset((void *)frame, 0, PAGE_SIZE);                                        // zero mem
+
+        if (!frame_was_mapped) {
+            vmm_unmap_page(frame);
+        }
+
         vmm_map_page_in(pd_phys, addr, frame, flags);                               // map into process
     }
 

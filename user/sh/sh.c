@@ -132,6 +132,7 @@ static void builtin_help(void) {
     sh_write("  cat <file>         print file contents\n");
     sh_write("  clear              clear screen\n");
     sh_write("  ps                 list processes (stub)\n");
+    sh_write("  orbit <planet>           join a chat room\n");
     sh_write("  write <path> <data...>    write string to file (creates if needed)\n");
     sh_write("  open <path>               open file; prints slot number for clone files\n");
     sh_write("  bind [-b|-a] <src> <dst>  bind src into namespace at dst\n");
@@ -547,11 +548,12 @@ static void builtin_serve(void) {
 }
 
 static const char *g_exec_path = 0;             // shared variable between parent & child: set by sh_exec before fork
+static char      **g_exec_argv = 0;
 
 // runs in child process
 static void exec_child(void) {
     signal(SIGINT, SIG_DFL);
-    execve(g_exec_path);                        // replace child image with ELF from /bin/<cmd>
+    execve(g_exec_path, g_exec_argv);  // pass argv
     sh_write("exec: execve failed\n");
     _exit(127);
 }
@@ -574,6 +576,7 @@ static void sh_exec_external(int argc, char **argv) {
     close(test_fd);
 
     g_exec_path = path;                             // set shared path before fork
+    g_exec_argv = argv;
 
     int child_pid = fork((uint32_t)exec_child);     // fork: child runs exec_child()
     if (child_pid < 0) {
@@ -647,6 +650,9 @@ static void wizard_host(void) {
     char ip[64];
     sh_readline(ip, sizeof(ip));
 
+    int hn_fd = open("/etc/hostname", O_WRONLY | O_CREAT | O_TRUNC);
+    if (hn_fd >= 0) { write(hn_fd, ip, (uint32_t)strlen(ip)); close(hn_fd); }
+
     sh_write("  Enter subnet mask  (e.g. 255.255.255.0): ");
     char mask[64];
     sh_readline(mask, sizeof(mask));
@@ -677,6 +683,9 @@ static void wizard_client(void) {
     sh_write("  Enter your IP address  (e.g. 10.0.0.2): ");
     char ip[64];
     sh_readline(ip, sizeof(ip));
+
+    int hn_fd = open("/etc/hostname", O_WRONLY | O_CREAT | O_TRUNC);
+    if (hn_fd >= 0) { write(hn_fd, ip, (uint32_t)strlen(ip)); close(hn_fd); }
 
     sh_write("  Enter subnet mask      (e.g. 255.255.255.0): ");
     char mask[64];

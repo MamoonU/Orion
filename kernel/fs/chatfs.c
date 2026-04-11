@@ -14,6 +14,17 @@
 #define CHAT_LOG_SIZE     8192      // message history buffer per room (bytes)
 #define CHAT_NAME_MAX     32        // max planet/username length
 
+static volatile int chatfs_lock = 0;
+
+static inline void chatfs_acquire(void) {
+    while (__sync_lock_test_and_set(&chatfs_lock, 1))
+        asm volatile("pause");                                  // spin: yield CPU hint on x86
+}
+
+static inline void chatfs_release(void) {
+    __sync_lock_release(&chatfs_lock);                          // atomic release
+}
+
 // chat_room_t structure: represents one planet
 typedef struct {
     char     name[CHAT_NAME_MAX];               // planet name
@@ -157,6 +168,8 @@ static int chatfs_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t 
     chat_room_t *r = room_get_or_create(tag->room_name);                            // ensure room exists
     if (!r) return -1;
 
+    chatfs_acquire();
+
     if (strncmp(cmd, "join ", 5) == 0) {                                            // CASE 1: join
 
         const char *uname = cmd + 5;
@@ -171,7 +184,6 @@ static int chatfs_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t 
         }
 
         log_msg(r, "Satellite ", uname, " deployed to ", r->name);                  // append join msg
-        log_append(r, "'s orbit\n");
         kprintf("CHATFS: satellite \"%s\" joined \"%s\"\n", uname, r->name);
 
     } else if (strncmp(cmd, "leave ", 6) == 0) {                                    // CASE 2: leave
@@ -211,6 +223,7 @@ static int chatfs_ctl_write(vnode_t *v, const void *buf, uint32_t len, uint32_t 
         kprintf("CHATFS: unknown ctl command: %s\n", cmd);
 
     }
+    chatfs_release();
     return (int)len;
 }
 

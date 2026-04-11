@@ -117,7 +117,7 @@ void    yield  (void);                              // voluntarily give up CPU
 void    sleep  (uint32_t ticks);                    // sleep for N PIT ticks
 int     wait   (int pid, int *exit_code);           // wait for child process
 int     fork   (uint32_t child_entry);              // spawn child process at entry point
-int     execve (const char *path);                  // replace current image with ELF at path
+int     execve(const char *path, char **argv);      // replace current image with ELF at path
 
 // signals
 sig_handler_t signal (int signum, sig_handler_t handler);   // register handler; returns old handler

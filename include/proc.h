@@ -153,7 +153,7 @@ void   proc_sleep(uint32_t ticks);                              // running -> bl
 void   proc_wake(pcb_t *p);                                     // blocked -> ready
 
 pid_t  proc_fork(uint32_t child_entry);                         // new process (child of current)
-int    proc_exec(pcb_t *p, uint32_t new_entry);                 // replace stopped process' excecution -> new entry point
+int proc_exec(pcb_t *p, uint32_t new_pd, uint32_t new_entry);   // replace stopped process' excecution -> new entry point
 
 void   proc_dump(const pcb_t *p);                               // debugging
 void   proc_dump_all(void);

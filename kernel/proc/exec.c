@@ -6,16 +6,15 @@
 #include "vmm.h"
 
 // replace program of existing process
-int proc_exec(pcb_t *p, uint32_t new_entry) {
+int proc_exec(pcb_t *p, uint32_t new_pd, uint32_t new_entry) {
 
     if (!p) {
         kprintf("PROC: proc_exec - NULL pcb\n");
         return -1;
     }
 
-    if (p->state == PROC_RUNNING) {
-        kprintf("PROC: proc_exec - cannot exec a RUNNING process\n");
-        return -1;
+    if (p->state == PROC_RUNNING) {                                         // if currently running, mark ready first so sched_add in proc_exec doesnt skip it
+        p->state = PROC_READY;
     }
 
     kprintf("PROC: proc_exec - [%u] \"%s\" -> new entry 0x%p\n", (uint32_t)p->pid, p->name, new_entry);
@@ -23,18 +22,11 @@ int proc_exec(pcb_t *p, uint32_t new_entry) {
     // remove from ready queue if already queued
     sched_remove(p);
 
-    // destroy old address space
-    if (p->page_directory) {
-        vmm_destroy_address_space((uint32_t)p->page_directory);
-        p->page_directory = 0;
+    if (p->page_directory && (uint32_t)p->page_directory != new_pd) {
+        vmm_destroy_address_space((uint32_t)p->page_directory);             // destroy address space
     }
-
-    // create new address space
-    uint32_t new_pd = vmm_create_address_space();
-    if (!new_pd) {
-        kprintf("PROC: proc_exec - failed to create address space\n"); return -1;
-    }
-    p->page_directory = (uint32_t *)new_pd;
+    p->page_directory = (uint32_t *)new_pd;                                 // create new address space
+    vmm_switch(new_pd);
  
     // setup user stack
     if (proc_setup_user_stack(p) != 0) {

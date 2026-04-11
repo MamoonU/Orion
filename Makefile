@@ -112,14 +112,18 @@ OBJS := $(ASM_OBJS) $(C_OBJS)
 # ─────────────────────────────────────────────────────────────
 # Usermode binaries
 # ─────────────────────────────────────────────────────────────
-USER_SH_SRC   	:= user/sh/sh.c
-USER_SH_LD    	:= user/sh/linker_user.ld
-USER_SH_ELF   	:= user/sh/sh.elf
-USER_SH_BIN_O 	:= user/sh/sh_bin.o
-USER_OTOP_SRC   := user/otop/otop.c
-USER_OTOP_LD    := user/sh/linker_user.ld
-USER_OTOP_ELF   := user/otop/otop.elf
-USER_OTOP_BIN_O := user/otop/otop_bin.o
+USER_SH_SRC   		:= user/sh/sh.c
+USER_SH_LD    		:= user/sh/linker_user.ld
+USER_SH_ELF   		:= user/sh/sh.elf
+USER_SH_BIN_O 		:= user/sh/sh_bin.o
+USER_OTOP_SRC   	:= user/otop/otop.c
+USER_OTOP_LD    	:= user/sh/linker_user.ld
+USER_OTOP_ELF   	:= user/otop/otop.elf
+USER_OTOP_BIN_O 	:= user/otop/otop_bin.o
+USER_ORBIT_SRC		:= user/orbit/orbit.c
+USER_ORBIT_LD		:= user/sh/linker_user.ld
+USER_ORBIT_ELF		:= user/orbit/orbit.elf
+USER_ORBIT_BIN_O	:= user/orbit/orbit_bin.o
 
 # ─────────────────────────────────────────────────────────────
 # liborion - userspace runtime static library
@@ -177,6 +181,18 @@ $(USER_OTOP_BIN_O): $(USER_OTOP_ELF)
 	@i686-elf-objcopy -I binary -O elf32-i386 -B i386 $< $@
 
 # ─────────────────────────────────────────────────────────────
+# user orbit
+# ─────────────────────────────────────────────────────────────
+$(USER_ORBIT_ELF): $(USER_ORBIT_SRC) $(LIBORION) $(USER_ORBIT_LD)
+	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+	@echo "┃                       Building orbit                              ┃"
+	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+	@$(CC) -T $(USER_ORBIT_LD) $(UFLAGS) $(USER_ORBIT_SRC) $(LIBORION) -lgcc -o $@
+
+$(USER_ORBIT_BIN_O): $(USER_ORBIT_ELF)
+	@i686-elf-objcopy -I binary -O elf32-i386 -B i386 $< $@
+
+# ─────────────────────────────────────────────────────────────
 # Kernel build rules
 # ─────────────────────────────────────────────────────────────
 kernel/arch/x86/boot.o:    kernel/arch/x86/boot.asm
@@ -220,11 +236,11 @@ ISODIR := isodir/boot
 .PHONY: all clean run
 all: myos.iso
 
-myos: $(LIBORION) $(OBJS) $(USER_SH_BIN_O) $(USER_OTOP_BIN_O) $(LWIP_OBJS)
+myos: $(LIBORION) $(OBJS) $(USER_SH_BIN_O) $(USER_OTOP_BIN_O) $(USER_ORBIT_BIN_O) $(LWIP_OBJS)
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
 	@echo "┃                          Linking Kernel                           ┃"
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
-	@$(CC) $(LDFLAGS) $(OBJS) $(USER_SH_BIN_O) $(USER_OTOP_BIN_O) $(LWIP_OBJS) -o myos -lgcc
+	@$(CC) $(LDFLAGS) $(OBJS) $(USER_SH_BIN_O) $(USER_OTOP_BIN_O) $(USER_ORBIT_BIN_O) $(LWIP_OBJS) -o myos -lgcc
 
 myos.iso: myos
 	@echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
@@ -241,7 +257,8 @@ clean:
 	@echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
 	@rm -f $(OBJS) $(LIBORION_OBJS) $(LIBORION) $(LWIP_OBJS) \
 	       $(USER_SH_ELF) $(USER_SH_BIN_O) \
-	       $(USER_OTOP_ELF) $(USER_OTOP_BIN_O) myos myos.iso
+	       $(USER_OTOP_ELF) $(USER_OTOP_BIN_O) \
+		   $(USER_ORBIT_ELF) $(USER_ORBIT_BIN_O) myos myos.iso
 	@rm -rf isodir
 
 QEMU_FLAGS := -cdrom myos.iso -serial stdio -no-reboot -m 128M
